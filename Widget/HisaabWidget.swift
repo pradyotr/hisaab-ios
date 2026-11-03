@@ -114,6 +114,29 @@ struct HisaabWidgetView: View {
     }
 }
 
+/// Circular "% of the cycle's spend cap used". The calendar icon in the ring's gap tells it apart
+/// from the daily widget. Shows only a percentage, so the hide-values setting doesn't apply.
+struct HisaabCycleWidgetView: View {
+    let entry: HisaabEntry
+
+    var body: some View {
+        Group {
+            if let s = entry.snapshot {
+                Gauge(value: Format.progress(s.cycle.utilisation)) {
+                    Image(systemName: "calendar")
+                } currentValueLabel: {
+                    Text(Format.percent(s.cycle.utilisation))
+                }
+                .gaugeStyle(.accessoryCircular)
+                .widgetAccentable()
+            } else {
+                Image(systemName: "indianrupeesign")
+            }
+        }
+        .containerBackground(for: .widget) { Color.clear }
+    }
+}
+
 // MARK: - Widgets
 
 struct HisaabWidget: Widget {
@@ -124,6 +147,17 @@ struct HisaabWidget: Widget {
         .configurationDisplayName("Hisaab")
         .description("Today's budget and how much of it you've used.")
         .supportedFamilies([.accessoryRectangular, .accessoryCircular, .accessoryInline])
+    }
+}
+
+struct HisaabCycleWidget: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: "HisaabCycleWidget", provider: HisaabProvider(forceHide: false)) { entry in
+            HisaabCycleWidgetView(entry: entry)
+        }
+        .configurationDisplayName("Hisaab (Cycle)")
+        .description("How much of this cycle's spend cap you've used.")
+        .supportedFamilies([.accessoryCircular])
     }
 }
 
@@ -142,6 +176,7 @@ struct HisaabPrivateWidget: Widget {
 struct HisaabWidgetBundle: WidgetBundle {
     var body: some Widget {
         HisaabWidget()
+        HisaabCycleWidget()
         HisaabPrivateWidget()
     }
 }

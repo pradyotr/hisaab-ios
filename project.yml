@@ -48,6 +48,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pradyot.hisaab
+        # App/Assets.xcassets/AppIcon.appiconset holds one 1024x1024 PNG; Xcode generates the other sizes.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     scheme: {}
 
   HisaabWidget:

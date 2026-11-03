@@ -3,12 +3,26 @@ import BudgetCore
 
 struct SettingsView: View {
     @Environment(LedgerModel.self) private var model
+    @AppStorage(AppearanceMode.storageKey) private var appearance: AppearanceMode = .system
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
                     NavigationLink("Budget") { SetupView() }
+                }
+
+                Section {
+                    Picker("Appearance", selection: $appearance) {
+                        ForEach(AppearanceMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("Appearance")
+                } footer: {
+                    Text("System follows your iPhone's light or dark setting.")
                 }
 
                 Section {
@@ -24,8 +38,8 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("1. Open Shortcuts > Automation > + > Message.")
                         Text("2. Sender: your bank. Or Message Contains: \"debited\".")
-                        Text("3. Choose Run Immediately.")
-                        Text("4. Add action \"Log Bank SMS\" (Hisaab). Set Message to Shortcut Input > Content.")
+                        Text("3. Choose Run Immediately, then New Blank Automation.")
+                        Text("4. Add action \"Log Bank SMS\" (Hisaab). Tap the blue Message word and choose Shortcut Input.")
                         Text("Add one automation for each bank sender or keyword.")
                             .foregroundStyle(.secondary)
                     }

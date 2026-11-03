@@ -15,6 +15,8 @@ The first time you open the app:
 
 To change these later, go to **Settings → Budget**.
 
+To set light or dark mode for the app, go to **Settings → Appearance**. **System** follows your iPhone's setting.
+
 ## How the daily budget works
 
 Each day's budget = money left in the cycle ÷ days left (including today). The amount is fixed at the start of each day.
@@ -54,8 +56,9 @@ The daily bars do not add up to the monthly bar. Each day's budget is recalculat
 3. Pick a widget:
    - **Hisaab**: today's budget, the amount used and the % used.
    - **Hisaab (Private)**: % used only, with no amounts.
+   - **Hisaab (Cycle)**: a circular gauge with the % of this cycle's spend cap used. It has a calendar icon.
 
-Each widget comes in three sizes: rectangular, circular (a % gauge) and inline (above the clock).
+The **Hisaab** and **Hisaab (Private)** widgets come in three sizes: rectangular, circular (a % gauge) and inline (above the clock). **Hisaab (Cycle)** is circular only.
 
 To hide amounts on the normal **Hisaab** widget too, turn on **Settings → Hide amounts on lock screen**.
 
@@ -67,8 +70,8 @@ iPhone apps cannot read your messages. Hisaab uses a Shortcuts automation instea
 
 1. Open **Shortcuts** → **Automation** → **+** → **Message**.
 2. Set **Sender** to your bank's SMS ID, or set **Message Contains** to `debited`.
-3. Select **Run Immediately**.
-4. Add the action **Log Bank SMS** (Hisaab). Set **Message** to **Shortcut Input → Content**.
+3. Select **Run Immediately**. Then tap **New Blank Automation**. Do not tap the suggested Hisaab action: then iOS hides the **Message** field and asks you to type the text each time.
+4. Tap **Add Action** and add **Log Bank SMS** (Hisaab). Tap the blue word **Message** and select **Shortcut Input**. The action then shows "Log Shortcut Input in Hisaab".
 5. Make one automation for each bank, or for each other keyword such as `spent`.
 
 Hisaab ignores OTPs, credits, refunds, failed transactions, payment reminders and UPI money requests. If the same SMS arrives twice within 10 minutes, Hisaab logs it only once.

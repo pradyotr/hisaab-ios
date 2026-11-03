@@ -108,6 +108,18 @@ final class BudgetEngineTests: XCTestCase {
         XCTAssertEqual(snap.day.spent, 100)
         XCTAssertEqual(snap.cycle.spent, 500)
         XCTAssertEqual(snap.cycle.difference, 29_500)
+        XCTAssertEqual(snap.cycle.utilisation!, 500.0 / 30_000.0, accuracy: 1e-9)
+    }
+
+    func testCycleUtilisationOverCapAndZeroCap() {
+        let over = engine().snapshot(at: date(2026, 11, 3), transactions: [Spend(amount: 45_000, date: date(2026, 11, 2))])
+        XCTAssertEqual(over.cycle.utilisation!, 1.5, accuracy: 1e-9)
+        XCTAssertLessThan(over.cycle.difference, 0)
+
+        // Saving the whole income leaves a zero cap: there is nothing to measure against.
+        let zero = engine(goal: .save(50_000)).snapshot(at: date(2026, 11, 3), transactions: [])
+        XCTAssertEqual(zero.cycle.cap, 0)
+        XCTAssertNil(zero.cycle.utilisation)
     }
 
     func testCycleSummariesSpanFromEarliestTransaction() {

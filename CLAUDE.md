@@ -9,7 +9,7 @@ Current stage: **zero-cost proof of concept**. After the POC works, the plan is 
 2. The app calculates a **daily budget**. Each day's budget is fixed at the start of the day:
    `B_d = max(S − spentBefore(d), 0) / (N − d)`. Here S is the spend cap, N is the number of days in the cycle, and d is the 0-based day index.
    Underspending raises later daily budgets and overspending lowers them. That is the "rollover". All values are derived from config + spends. Nothing derived is stored.
-3. The **lock screen widget** shows today's budget, the amount used and the % used. A **hide-values mode** shows only percentages. The `Hisaab (Private)` widget always hides values, and a Settings toggle applies the same mode to the normal widget.
+3. The **lock screen widget** shows today's budget, the amount used and the % used. A **hide-values mode** shows only percentages. The `Hisaab (Private)` widget always hides values, and a Settings toggle applies the same mode to the normal widget. `Hisaab (Cycle)` is a circular gauge of % of the cycle's spend cap used.
 4. **Spends come from bank SMS** through a Shortcuts automation, plus manual add/edit.
 5. **Charts:** green bars above zero mean saved, red bars below zero mean exceeded.
    - Daily chart: `B_d − spent_d`.
@@ -60,7 +60,7 @@ Widget/                      WidgetKit lock screen widgets (accessoryRectangular
 
 - Past cycles are summarised with the *current* config. To fix: store config history.
 - Parser = ignore rules + `SMSRule.bankRules` + `SMSRule.generic`. Add bank-specific rules from real (anonymised) samples with the `add-sms-format` skill.
-- No categories, no app icon, no iCloud backup.
+- No categories, no iCloud backup. App icon is a placeholder (App/Assets.xcassets/AppIcon.appiconset/AppIcon.png, 1024x1024 RGB, no transparency).
 - After paying for the developer account: TestFlight/1-year signing, and Xcode on a Mac or a cloud Mac for real debugging.
 
 ## Skills

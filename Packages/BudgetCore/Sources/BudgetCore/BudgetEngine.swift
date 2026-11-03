@@ -37,6 +37,11 @@ public struct CycleSummary: Equatable, Sendable, Identifiable {
     public let spent: Decimal
     /// Positive = under the cap (green), negative = over (red).
     public var difference: Decimal { cap - spent }
+
+    /// spent / cap. Can go above 1 when the cap is exceeded. Nil when the cap is zero.
+    public var utilisation: Double? {
+        cap > 0 ? (spent / cap).doubleValue : nil
+    }
 }
 
 /// Everything the widget and the Today screen need.
