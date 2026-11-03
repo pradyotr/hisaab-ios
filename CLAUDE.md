@@ -19,8 +19,9 @@ Current stage: **zero-cost proof of concept**. After the POC works, the plan is 
 ## Hard platform constraints (don't propose things that break these)
 
 - **No Mac.** Development happens on Windows. Builds run only on GitHub Actions `macos-latest`. No simulator, no Xcode debugger, no previews. Use the in-app **Debug log** and **Test SMS parser** screens to debug on the device.
-- **Free Apple ID sideloading** (Sideloadly or AltStore):
-  - The app expires after 7 days. Re-sign and install over the old app to keep the data.
+- **Free Apple ID sideloading with AltStore Classic** (AltServer on Windows):
+  - Sideloadly is ruled out: we tested it and it drops the App Group, so the widget sees no data.
+  - The app expires after 7 days. Refresh it in AltStore, or install over the old app to keep the data.
   - Limits: 3 apps, 10 App IDs per week. App + widget = 2 App IDs.
   - Developer Mode must be on.
 - **iOS cannot read other apps' notifications or the SMS inbox.** The only SMS path is a Shortcuts personal automation (Message trigger, "Run Immediately") that calls the `LogBankSMSIntent` App Intent with the message text. Don't suggest notification listeners, SMS inbox access, or `ILMessageFilterExtension` (that one only sees unknown senders and can't share data).

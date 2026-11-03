@@ -39,18 +39,20 @@ The result is `build/Hisaab.ipa`. It is ad-hoc signed only, so it won't install 
 
 ## 5. Tell the user how to install it (Windows)
 
-**Sideloadly** (simplest):
-1. Install iTunes and iCloud from Apple's website, not the Microsoft Store versions.
-2. Connect the iPhone by USB and trust the computer.
-3. Drag `build/Hisaab.ipa` into Sideloadly, enter the Apple ID, and click Start.
-4. On the iPhone:
-   - Settings → General → VPN & Device Management → trust your Apple ID.
-   - Settings → Privacy & Security → Developer Mode → On (needs a restart the first time).
+**Use AltStore Classic, not Sideloadly.** We verified this on the user's iPhone in Nov 2026: Sideloadly drops the App Group, and Diagnostics then shows "Shared storage: NOT SHARED". AltStore registers the group and rewrites its ID, and `AppGroup.id` picks up the rewritten ID from `ALTAppGroups`. The user already has AltServer and AltStore set up.
 
-**If Settings → Diagnostics in the app shows "Shared storage: NOT SHARED"**, the widget can't see data. The App Group was dropped while signing. Use **AltStore** (AltServer for Windows) instead, because it registers App Groups for free accounts. `AppGroup.id` already reads AltStore's rewritten ID.
+For a new build:
+1. Copy `build/Hisaab.ipa` into the user's iCloud Drive folder on Windows (usually `%USERPROFILE%\iCloudDrive`). Ask before writing outside the repo.
+2. On the iPhone: open AltStore → My Apps → **+** → pick `Hisaab.ipa`. It installs over the existing app and keeps the data.
+3. Check that Settings → Diagnostics still says **Shared storage: OK**.
+
+Troubleshooting:
+- "No devices" in AltServer or Sideloadly: the phone isn't visible on USB. Use a data cable, plug straight into the laptop, unlock the phone and tap Trust.
+- "Untrusted Developer": Settings → General → VPN & Device Management → trust the Apple ID.
+- "Developer Mode Required": Settings → Privacy & Security → Developer Mode → On, then restart.
 
 **Free account limits:**
-- The app expires after 7 days. Re-run steps 3–4 with the same `.ipa` or a newer one, installing over the existing app. Data is kept as long as the app is not deleted.
+- Apps expire after 7 days, and AltStore itself expires too. AltStore → My Apps → Refresh All works over Wi-Fi while AltServer runs on the laptop on the same network. Installing a newer `.ipa` over the old one also resets the 7 days. Data is kept as long as the app is not deleted.
 - 3 sideloaded apps at a time, 10 App IDs per week. Hisaab uses 2.
 
 After the first install, remind the user about the one-time Shortcuts automation (Settings screen in the app lists the steps) and adding the widget to the lock screen (long-press the lock screen → Customize → Lock Screen → add widget → Hisaab).
