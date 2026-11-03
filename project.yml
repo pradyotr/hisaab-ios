@@ -1,0 +1,76 @@
+# XcodeGen spec. CI runs `xcodegen generate` to create Hisaab.xcodeproj (which is not committed).
+# Docs: https://github.com/yonaskolb/XcodeGen/blob/master/Docs/ProjectSpec.md
+#
+# IDs: if you change the bundle prefix or the App Group, also change Shared/AppGroup.swift (defaultID).
+# Free Apple IDs need IDs that are globally unique.
+name: Hisaab
+
+options:
+  bundleIdPrefix: com.pradyot
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"
+    DEVELOPMENT_TEAM: ""
+
+packages:
+  BudgetCore:
+    path: Packages/BudgetCore
+
+targets:
+  Hisaab:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Shared
+    dependencies:
+      - package: BudgetCore
+      - target: HisaabWidget
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Hisaab
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    entitlements:
+      path: App/Hisaab.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.pradyot.hisaab
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pradyot.hisaab
+    scheme: {}
+
+  HisaabWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Widget
+      - Shared
+    dependencies:
+      - package: BudgetCore
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    info:
+      path: Widget/Info.plist
+      properties:
+        CFBundleDisplayName: Hisaab Widget
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Widget/HisaabWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.pradyot.hisaab
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pradyot.hisaab.widget

@@ -1,0 +1,48 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Linux is fast and cheap, and proves BudgetCore has no Apple-only code.
+  test-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Test BudgetCore
+        run: swift test --package-path Packages/BudgetCore
+
+  build-ipa:
+    needs: test-core
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode version
+        run: xcodebuild -version
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Build Hisaab.ipa
+        run: bash scripts/build-ipa.sh
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hisaab-ipa
+          path: build/Hisaab.ipa
+          retention-days: 14

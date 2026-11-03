@@ -1,0 +1,15 @@
+# XcodeGen output (regenerated in CI from project.yml)
+*.xcodeproj/
+*.xcworkspace/
+# Build products
+build/
+DerivedData/
+Payload/
+*.ipa
+.build/
+.swiftpm/
+# OS
+.DS_Store
+Thumbs.db
+# Claude local settings
+.claude/settings.local.json
