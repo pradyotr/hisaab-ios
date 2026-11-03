@@ -70,8 +70,8 @@ final class BudgetEngineTests: XCTestCase {
     func testUnderAndOverspendingRollForward() {
         let e = engine()
         let txs = [
-            Transaction(amount: 400, date: date(2026, 11, 1)),
-            Transaction(amount: 5_000, date: date(2026, 11, 2)),
+            Spend(amount: 400, date: date(2026, 11, 1)),
+            Spend(amount: 5_000, date: date(2026, 11, 2)),
         ]
         let days = e.dayStatuses(for: e.cycle(containing: date(2026, 11, 3)), transactions: txs, through: date(2026, 11, 3))
         XCTAssertEqual(days.count, 3)
@@ -89,7 +89,7 @@ final class BudgetEngineTests: XCTestCase {
 
     func testBudgetNeverNegativeAfterOverspending() {
         let e = engine(income: 1_000, goal: .spendCap(900))
-        let txs = [Transaction(amount: 2_000, date: date(2026, 11, 1))]
+        let txs = [Spend(amount: 2_000, date: date(2026, 11, 1))]
         let day2 = e.snapshot(at: date(2026, 11, 2), transactions: txs).day
         XCTAssertEqual(day2.budget, 0)
         XCTAssertNil(day2.utilisation)
@@ -99,9 +99,9 @@ final class BudgetEngineTests: XCTestCase {
     func testSnapshotDaysLeftAndCycleTotals() {
         let e = engine()
         let txs = [
-            Transaction(amount: 400, date: date(2026, 11, 1)),
-            Transaction(amount: 100, date: date(2026, 11, 3)),
-            Transaction(amount: 999, date: date(2026, 10, 31)), // previous cycle, ignored
+            Spend(amount: 400, date: date(2026, 11, 1)),
+            Spend(amount: 100, date: date(2026, 11, 3)),
+            Spend(amount: 999, date: date(2026, 10, 31)), // previous cycle, ignored
         ]
         let snap = e.snapshot(at: date(2026, 11, 3), transactions: txs)
         XCTAssertEqual(snap.daysLeftIncludingToday, 28)
@@ -113,8 +113,8 @@ final class BudgetEngineTests: XCTestCase {
     func testCycleSummariesSpanFromEarliestTransaction() {
         let e = engine()
         let txs = [
-            Transaction(amount: 31_000, date: date(2026, 9, 15)),
-            Transaction(amount: 10_000, date: date(2026, 10, 2)),
+            Spend(amount: 31_000, date: date(2026, 9, 15)),
+            Spend(amount: 10_000, date: date(2026, 10, 2)),
         ]
         let summaries = e.cycleSummaries(transactions: txs, upTo: date(2026, 11, 3))
         XCTAssertEqual(summaries.map(\.cycle.start), [date(2026, 9, 1, 0), date(2026, 10, 1, 0), date(2026, 11, 1, 0)])

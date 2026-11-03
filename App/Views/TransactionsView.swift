@@ -3,7 +3,7 @@ import BudgetCore
 
 struct TransactionsView: View {
     @Environment(LedgerModel.self) private var model
-    @State private var editing: Transaction?
+    @State private var editing: Spend?
     @State private var adding = false
 
     private var currencyCode: String { model.config?.currencyCode ?? "INR" }
@@ -11,9 +11,9 @@ struct TransactionsView: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(model.ledger.transactions) { transaction in
-                    Button { editing = transaction } label: {
-                        TransactionRow(transaction: transaction, currencyCode: currencyCode)
+                ForEach(model.ledger.transactions) { spend in
+                    Button { editing = spend } label: {
+                        TransactionRow(spend: spend, currencyCode: currencyCode)
                     }
                     .tint(.primary)
                 }
@@ -32,39 +32,39 @@ struct TransactionsView: View {
             .toolbar {
                 Button { adding = true } label: { Image(systemName: "plus") }
             }
-            .sheet(isPresented: $adding) { TransactionEditor(transaction: nil) }
-            .sheet(item: $editing) { TransactionEditor(transaction: $0) }
+            .sheet(isPresented: $adding) { TransactionEditor(spend: nil) }
+            .sheet(item: $editing) { TransactionEditor(spend: $0) }
         }
     }
 }
 
 struct TransactionRow: View {
-    let transaction: Transaction
+    let spend: Spend
     let currencyCode: String
 
     var body: some View {
         HStack {
-            Image(systemName: transaction.source == .sms ? "message" : "hand.tap")
+            Image(systemName: spend.source == .sms ? "message" : "hand.tap")
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading) {
-                Text(transaction.merchant ?? transaction.note ?? "Spend")
+                Text(spend.merchant ?? spend.note ?? "Spend")
                     .lineLimit(1)
-                Text(transaction.date.formatted(date: .abbreviated, time: .shortened))
+                Text(spend.date.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(Format.money(transaction.amount, currencyCode))
+            Text(Format.money(spend.amount, currencyCode))
                 .monospacedDigit()
         }
     }
 }
 
-/// Add (transaction == nil) or edit a spend. Use this to fix wrong SMS parses and to add cash spends.
+/// Add (spend == nil) or edit a spend. Use this to fix wrong SMS parses and to add cash spends.
 struct TransactionEditor: View {
     @Environment(LedgerModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    let transaction: Transaction?
+    let spend: Spend?
 
     @State private var amountText = ""
     @State private var merchant = ""
@@ -80,7 +80,7 @@ struct TransactionEditor: View {
                 TextField("Note", text: $note)
                 DatePicker("When", selection: $date)
 
-                if let raw = transaction?.rawText {
+                if let raw = spend?.rawText {
                     Section("Original SMS") {
                         Text(raw)
                             .font(.footnote)
@@ -89,7 +89,7 @@ struct TransactionEditor: View {
                     }
                 }
             }
-            .navigationTitle(transaction == nil ? "Add spend" : "Edit spend")
+            .navigationTitle(spend == nil ? "Add spend" : "Edit spend")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -110,25 +110,25 @@ struct TransactionEditor: View {
     }
 
     private func load() {
-        guard let transaction else { return }
-        amountText = "\(transaction.amount)"
-        merchant = transaction.merchant ?? ""
-        note = transaction.note ?? ""
-        date = transaction.date
+        guard let spend else { return }
+        amountText = "\(spend.amount)"
+        merchant = spend.merchant ?? ""
+        note = spend.note ?? ""
+        date = spend.date
     }
 
     private func save() {
         guard let amount else { return }
         let cleanMerchant = merchant.trimmingCharacters(in: .whitespaces)
         let cleanNote = note.trimmingCharacters(in: .whitespaces)
-        if var existing = transaction {
+        if var existing = spend {
             existing.amount = amount
             existing.merchant = cleanMerchant.isEmpty ? nil : cleanMerchant
             existing.note = cleanNote.isEmpty ? nil : cleanNote
             existing.date = date
             model.update(existing)
         } else {
-            model.add(Transaction(amount: amount, date: date,
+            model.add(Spend(amount: amount, date: date,
                                   merchant: cleanMerchant.isEmpty ? nil : cleanMerchant,
                                   note: cleanNote.isEmpty ? nil : cleanNote,
                                   source: .manual))

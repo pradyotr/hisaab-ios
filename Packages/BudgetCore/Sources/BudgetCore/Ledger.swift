@@ -29,12 +29,12 @@ public struct Ledger: Codable, Equatable, Sendable {
 
     public var config: BudgetConfig?
     /// Newest first.
-    public var transactions: [Transaction]
+    public var transactions: [Spend]
     public var settings: AppSettings
     /// Newest first. Debug log for the parser and storage, shown in Settings > Debug log.
     public var log: [LogEntry]
 
-    public init(config: BudgetConfig? = nil, transactions: [Transaction] = [], settings: AppSettings = AppSettings(), log: [LogEntry] = []) {
+    public init(config: BudgetConfig? = nil, transactions: [Spend] = [], settings: AppSettings = AppSettings(), log: [LogEntry] = []) {
         self.config = config
         self.transactions = transactions
         self.settings = settings
@@ -45,14 +45,14 @@ public struct Ledger: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         config = try c.decodeIfPresent(BudgetConfig.self, forKey: .config)
-        transactions = try c.decodeIfPresent([Transaction].self, forKey: .transactions) ?? []
+        transactions = try c.decodeIfPresent([Spend].self, forKey: .transactions) ?? []
         settings = try c.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings()
         log = try c.decodeIfPresent([LogEntry].self, forKey: .log) ?? []
     }
 
     /// Adds a transaction. Returns false if it is a duplicate SMS (same text within `dedupeWindow` seconds).
     @discardableResult
-    public mutating func add(_ transaction: Transaction, dedupeWindow: TimeInterval = 600) -> Bool {
+    public mutating func add(_ transaction: Spend, dedupeWindow: TimeInterval = 600) -> Bool {
         if transaction.source == .sms, let raw = transaction.rawText {
             let isDuplicate = transactions.contains {
                 $0.rawText == raw && abs($0.date.timeIntervalSince(transaction.date)) < dedupeWindow
@@ -64,7 +64,7 @@ public struct Ledger: Codable, Equatable, Sendable {
         return true
     }
 
-    public mutating func update(_ transaction: Transaction) {
+    public mutating func update(_ transaction: Spend) {
         guard let index = transactions.firstIndex(where: { $0.id == transaction.id }) else { return }
         transactions[index] = transaction
         transactions.sort { $0.date > $1.date }

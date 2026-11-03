@@ -24,8 +24,8 @@ final class LedgerModel {
     }
 
     func saveConfig(_ config: BudgetConfig) { mutate { $0.config = config } }
-    func add(_ transaction: Transaction) { mutate { $0.add(transaction) } }
-    func update(_ transaction: Transaction) { mutate { $0.update(transaction) } }
+    func add(_ transaction: Spend) { mutate { $0.add(transaction) } }
+    func update(_ transaction: Spend) { mutate { $0.update(transaction) } }
     func delete(ids: Set<UUID>) { mutate { $0.remove(ids: ids) } }
     func setHideValues(_ hide: Bool) { mutate { $0.settings.hideValues = hide } }
     func clearLog() { mutate { $0.log.removeAll() } }

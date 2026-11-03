@@ -6,23 +6,23 @@ final class LedgerTests: XCTestCase {
         var ledger = Ledger()
         let now = Date()
         let sms = "Rs 500 debited from A/c XX1234 to shop@upi"
-        XCTAssertTrue(ledger.add(Transaction(amount: 500, date: now, source: .sms, rawText: sms)))
-        XCTAssertFalse(ledger.add(Transaction(amount: 500, date: now.addingTimeInterval(30), source: .sms, rawText: sms)))
-        XCTAssertTrue(ledger.add(Transaction(amount: 500, date: now.addingTimeInterval(3_600), source: .sms, rawText: sms)))
+        XCTAssertTrue(ledger.add(Spend(amount: 500, date: now, source: .sms, rawText: sms)))
+        XCTAssertFalse(ledger.add(Spend(amount: 500, date: now.addingTimeInterval(30), source: .sms, rawText: sms)))
+        XCTAssertTrue(ledger.add(Spend(amount: 500, date: now.addingTimeInterval(3_600), source: .sms, rawText: sms)))
         XCTAssertEqual(ledger.transactions.count, 2)
     }
 
     func testManualEntriesAreNeverDeduped() {
         var ledger = Ledger()
-        XCTAssertTrue(ledger.add(Transaction(amount: 50)))
-        XCTAssertTrue(ledger.add(Transaction(amount: 50)))
+        XCTAssertTrue(ledger.add(Spend(amount: 50)))
+        XCTAssertTrue(ledger.add(Spend(amount: 50)))
     }
 
     func testTransactionsSortedNewestFirst() {
         var ledger = Ledger()
         let now = Date()
-        ledger.add(Transaction(amount: 1, date: now.addingTimeInterval(-100)))
-        ledger.add(Transaction(amount: 2, date: now))
+        ledger.add(Spend(amount: 1, date: now.addingTimeInterval(-100)))
+        ledger.add(Spend(amount: 2, date: now))
         XCTAssertEqual(ledger.transactions.map(\.amount), [2, 1])
     }
 
@@ -41,7 +41,7 @@ final class LedgerTests: XCTestCase {
         XCTAssertEqual(store.load(), Ledger())
 
         var ledger = Ledger(config: BudgetConfig(monthlyIncome: 50_000, goal: .save(10_000)))
-        ledger.add(Transaction(amount: Decimal(string: "123.45")!, merchant: "Cafe"))
+        ledger.add(Spend(amount: Decimal(string: "123.45")!, merchant: "Cafe"))
         try store.save(ledger)
         XCTAssertEqual(store.load(), ledger)
 

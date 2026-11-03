@@ -82,7 +82,7 @@ public struct BudgetEngine: Sendable {
     }
 
     /// Status for each day of `cycle`, stopping after the day that contains `through` (if given).
-    public func dayStatuses(for cycle: BudgetCycle, transactions: [Transaction], through last: Date? = nil) -> [DayStatus] {
+    public func dayStatuses(for cycle: BudgetCycle, transactions: [Spend], through last: Date? = nil) -> [DayStatus] {
         let inCycle = transactions.filter { cycle.contains($0.date) }
         let grouped = Dictionary(grouping: inCycle) { calendar.startOfDay(for: $0.date) }
         let spentByDay = grouped.mapValues { $0.reduce(Decimal(0)) { $0 + $1.amount } }
@@ -104,14 +104,14 @@ public struct BudgetEngine: Sendable {
         return result
     }
 
-    public func summary(for cycle: BudgetCycle, transactions: [Transaction]) -> CycleSummary {
+    public func summary(for cycle: BudgetCycle, transactions: [Spend]) -> CycleSummary {
         let spent = transactions.filter { cycle.contains($0.date) }.reduce(Decimal(0)) { $0 + $1.amount }
         return CycleSummary(cycle: cycle, cap: config.spendCap, spent: spent)
     }
 
     /// Summaries from the cycle of the earliest transaction up to the cycle containing `date`.
     /// POC limitation: uses the *current* config for past cycles.
-    public func cycleSummaries(transactions: [Transaction], upTo date: Date) -> [CycleSummary] {
+    public func cycleSummaries(transactions: [Spend], upTo date: Date) -> [CycleSummary] {
         let current = cycle(containing: date)
         var cycles: [BudgetCycle] = []
         if let earliest = transactions.map(\.date).min(), earliest < current.start {
@@ -125,7 +125,7 @@ public struct BudgetEngine: Sendable {
         return cycles.map { summary(for: $0, transactions: transactions) }
     }
 
-    public func snapshot(at date: Date, transactions: [Transaction]) -> TodaySnapshot {
+    public func snapshot(at date: Date, transactions: [Spend]) -> TodaySnapshot {
         let c = cycle(containing: date)
         let statuses = dayStatuses(for: c, transactions: transactions, through: date)
         let today = statuses.last

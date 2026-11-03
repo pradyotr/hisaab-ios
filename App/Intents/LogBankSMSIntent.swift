@@ -36,7 +36,7 @@ struct LogBankSMSIntent: AppIntent {
         try AppGroup.store.update { ledger in
             switch SMSParser().parse(message) {
             case .debit(let parsed):
-                let transaction = Transaction(amount: parsed.amount, date: date, merchant: parsed.merchant,
+                let transaction = Spend(amount: parsed.amount, date: date, merchant: parsed.merchant,
                                               source: .sms, rawText: message)
                 if ledger.add(transaction) {
                     outcome = "Logged \(parsed.amount) \(parsed.merchant ?? "") [\(parsed.ruleID)]"

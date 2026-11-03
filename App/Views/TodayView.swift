@@ -19,7 +19,7 @@ struct TodayView: View {
             .toolbar {
                 Button { showingAdd = true } label: { Image(systemName: "plus") }
             }
-            .sheet(isPresented: $showingAdd) { TransactionEditor(transaction: nil) }
+            .sheet(isPresented: $showingAdd) { TransactionEditor(spend: nil) }
         }
     }
 

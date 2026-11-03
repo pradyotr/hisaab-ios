@@ -48,7 +48,7 @@ struct HisaabProvider: TimelineProvider {
         let config = BudgetConfig(monthlyIncome: 60_000, goal: .save(30_000))
         let now = Date()
         let snapshot = BudgetEngine(config: config)
-            .snapshot(at: now, transactions: [Transaction(amount: 380, date: now)])
+            .snapshot(at: now, transactions: [Spend(amount: 380, date: now)])
         return HisaabEntry(date: now, snapshot: snapshot, currencyCode: "INR", hideValues: hide)
     }
 }

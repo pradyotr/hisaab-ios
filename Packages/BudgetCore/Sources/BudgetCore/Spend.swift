@@ -6,7 +6,7 @@ public enum TransactionSource: String, Codable, Sendable {
 }
 
 /// A single spend. Amounts are always positive; credits are never stored.
-public struct Transaction: Codable, Equatable, Identifiable, Sendable {
+public struct Spend: Codable, Equatable, Identifiable, Sendable {
     public var id: UUID
     public var amount: Decimal
     public var date: Date
