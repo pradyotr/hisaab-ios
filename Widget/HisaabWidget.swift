@@ -63,6 +63,8 @@ struct HisaabWidgetView: View {
         Group {
             if let snapshot = entry.snapshot {
                 switch family {
+                case .systemSmall: HomeTodaySmall(entry: entry, s: snapshot)
+                case .systemMedium: HomeTodayMedium(entry: entry, s: snapshot)
                 case .accessoryCircular: circular(snapshot)
                 case .accessoryInline: inline(snapshot)
                 default: rectangular(snapshot)
@@ -71,7 +73,7 @@ struct HisaabWidgetView: View {
                 Text("Set up Hisaab")
             }
         }
-        .containerBackground(for: .widget) { Color.clear }
+        .widgetBackground(family)
     }
 
     private func money(_ value: Decimal) -> String { Format.money(value, entry.currencyCode) }
@@ -115,13 +117,17 @@ struct HisaabWidgetView: View {
 }
 
 /// Circular "% of the cycle's spend cap used". The calendar icon in the ring's gap tells it apart
-/// from the daily widget. Shows only a percentage, so the hide-values setting doesn't apply.
+/// from the daily widget. On the lock screen it shows only a percentage. The home screen version
+/// also shows amounts unless hide-values is on.
 struct HisaabCycleWidgetView: View {
+    @Environment(\.widgetFamily) private var family
     let entry: HisaabEntry
 
     var body: some View {
         Group {
-            if let s = entry.snapshot {
+            if let s = entry.snapshot, family == .systemSmall {
+                HomeCycleSmall(entry: entry, s: s)
+            } else if let s = entry.snapshot {
                 Gauge(value: Format.progress(s.cycle.utilisation)) {
                     Image(systemName: "calendar")
                 } currentValueLabel: {
@@ -133,7 +139,165 @@ struct HisaabCycleWidgetView: View {
                 Image(systemName: "indianrupeesign")
             }
         }
-        .containerBackground(for: .widget) { Color.clear }
+        .widgetBackground(family)
+    }
+}
+
+// MARK: - Home screen views
+
+extension View {
+    /// Lock screen widgets are drawn by iOS on the wallpaper, so they get no background.
+    /// Home screen widgets get the normal system widget background.
+    @ViewBuilder
+    func widgetBackground(_ family: WidgetFamily) -> some View {
+        switch family {
+        case .systemSmall, .systemMedium, .systemLarge, .systemExtraLarge:
+            containerBackground(.fill.tertiary, for: .widget)
+        default:
+            containerBackground(for: .widget) { Color.clear }
+        }
+    }
+}
+
+/// Bar colour on the home screen: green while within budget, red once over it (or nothing left).
+private func usageTint(_ utilisation: Double?) -> Color {
+    (utilisation ?? 2) > 1 ? .red : .green
+}
+
+private struct HomeHeader: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: systemImage)
+            Text(title)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+    }
+}
+
+/// Today: what is left, the day's budget, the amount used and % used.
+struct HomeTodaySmall: View {
+    let entry: HisaabEntry
+    let s: TodaySnapshot
+
+    private func money(_ value: Decimal) -> String { Format.money(value, entry.currencyCode) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HomeHeader(title: "Today", systemImage: "indianrupeesign.circle")
+            Spacer(minLength: 0)
+            if entry.hideValues {
+                Text(Format.percent(s.day.utilisation))
+                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .minimumScaleFactor(0.5)
+                    .lineLimit(1)
+                Text("used")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(money(max(s.day.difference, 0)))
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .minimumScaleFactor(0.5)
+                    .lineLimit(1)
+                Text("left of \(money(s.day.budget))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            Spacer(minLength: 0)
+            ProgressView(value: Format.progress(s.day.utilisation))
+                .tint(usageTint(s.day.utilisation))
+            Text(entry.hideValues
+                 ? "\(s.daysLeftIncludingToday) days left in cycle"
+                 : "\(money(s.day.spent)) used · \(Format.percent(s.day.utilisation))")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+}
+
+/// Today on the left, the whole cycle on the right.
+struct HomeTodayMedium: View {
+    let entry: HisaabEntry
+    let s: TodaySnapshot
+
+    private func money(_ value: Decimal) -> String { Format.money(value, entry.currencyCode) }
+
+    var body: some View {
+        HStack(spacing: 16) {
+            HomeTodaySmall(entry: entry, s: s)
+            Divider()
+            VStack(alignment: .leading, spacing: 4) {
+                HomeHeader(title: "This cycle", systemImage: "calendar")
+                Spacer(minLength: 0)
+                Text(Format.percent(s.cycle.utilisation))
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .minimumScaleFactor(0.5)
+                    .lineLimit(1)
+                Text(entry.hideValues
+                     ? "of spend cap used"
+                     : "\(money(s.cycle.spent)) of \(money(s.cycle.cap))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Spacer(minLength: 0)
+                ProgressView(value: Format.progress(s.cycle.utilisation))
+                    .tint(usageTint(s.cycle.utilisation))
+                Text("\(s.daysLeftIncludingToday) days left")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// Cycle: a ring with the % of the spend cap used.
+struct HomeCycleSmall: View {
+    let entry: HisaabEntry
+    let s: TodaySnapshot
+
+    private func money(_ value: Decimal) -> String { Format.money(value, entry.currencyCode) }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HomeHeader(title: "This cycle", systemImage: "calendar")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 0)
+            ZStack {
+                Circle()
+                    .stroke(Color.secondary.opacity(0.25), lineWidth: 10)
+                Circle()
+                    .trim(from: 0, to: Format.progress(s.cycle.utilisation))
+                    .stroke(usageTint(s.cycle.utilisation),
+                            style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Text(Format.percent(s.cycle.utilisation))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .minimumScaleFactor(0.5)
+                    .lineLimit(1)
+                    .padding(12)
+            }
+            .frame(width: 80, height: 80)
+            Spacer(minLength: 0)
+            Text(entry.hideValues
+                 ? "\(s.daysLeftIncludingToday) days left"
+                 : "\(money(s.cycle.spent)) of \(money(s.cycle.cap))")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -146,7 +310,8 @@ struct HisaabWidget: Widget {
         }
         .configurationDisplayName("Hisaab")
         .description("Today's budget and how much of it you've used.")
-        .supportedFamilies([.accessoryRectangular, .accessoryCircular, .accessoryInline])
+        .supportedFamilies([.systemSmall, .systemMedium,
+                            .accessoryRectangular, .accessoryCircular, .accessoryInline])
     }
 }
 
@@ -157,7 +322,7 @@ struct HisaabCycleWidget: Widget {
         }
         .configurationDisplayName("Hisaab (Cycle)")
         .description("How much of this cycle's spend cap you've used.")
-        .supportedFamilies([.accessoryCircular])
+        .supportedFamilies([.systemSmall, .accessoryCircular])
     }
 }
 
@@ -168,7 +333,8 @@ struct HisaabPrivateWidget: Widget {
         }
         .configurationDisplayName("Hisaab (Private)")
         .description("Percentages only, no amounts.")
-        .supportedFamilies([.accessoryRectangular, .accessoryCircular, .accessoryInline])
+        .supportedFamilies([.systemSmall, .systemMedium,
+                            .accessoryRectangular, .accessoryCircular, .accessoryInline])
     }
 }
 

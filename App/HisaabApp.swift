@@ -15,7 +15,7 @@ struct HisaabApp: App {
 }
 
 /// In-app light/dark choice. A UI preference for the app only, so it lives in UserDefaults, not ledger.json.
-/// The lock screen widgets are tinted by iOS and ignore this.
+/// The widgets follow the system appearance and ignore this.
 enum AppearanceMode: String, CaseIterable, Identifiable {
     case system, light, dark
 

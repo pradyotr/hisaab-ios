@@ -100,9 +100,23 @@ The daily bars do not add up to the monthly bar. Each day's budget is recalculat
 
 The **Hisaab** and **Hisaab (Private)** widgets come in three sizes: rectangular, circular (a % gauge) and inline (above the clock). **Hisaab (Cycle)** is circular only.
 
-To hide amounts on the normal **Hisaab** widget too, turn on **Settings → Hide amounts on lock screen**.
+## Home screen widget
 
-The widget changes to the new day's budget at midnight. It refreshes after every new spend.
+1. Long-press an empty area of the home screen, then tap **Edit** → **Add Widget**.
+2. Search for **Hisaab**, then swipe to the widget and size you want:
+   - **Hisaab**, small: the money left today, today's budget, the amount used and the % used.
+   - **Hisaab**, medium: today on the left, and this cycle (% of the spend cap used, the amount spent and the days left) on the right.
+   - **Hisaab (Private)**, small or medium: the same layouts with percentages only.
+   - **Hisaab (Cycle)**, small: a ring with the % of this cycle's spend cap used.
+3. Tap **Add Widget**.
+
+The bars and the ring are green while you are within budget. They turn red when you go over it.
+
+## Hide amounts
+
+To hide amounts on the **Hisaab** and **Hisaab (Cycle)** widgets too, turn on **Settings → Hide amounts in widgets**. This applies to the lock screen and the home screen.
+
+The widgets change to the new day's budget at midnight. They refresh after every new spend.
 
 ## Track spends from bank SMS
 

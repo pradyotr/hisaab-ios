@@ -9,7 +9,7 @@ Current stage: **zero-cost proof of concept**. After the POC works, the plan is 
 2. The app calculates a **daily budget**. Each day's budget is fixed at the start of the day:
    `B_d = max(S − spentBefore(d), 0) / (N − d)`. Here S is the spend cap, N is the number of days in the cycle, and d is the 0-based day index.
    Underspending raises later daily budgets and overspending lowers them. That is the "rollover". All values are derived from config + spends. Nothing derived is stored.
-3. The **lock screen widget** shows today's budget, the amount used and the % used. A **hide-values mode** shows only percentages. The `Hisaab (Private)` widget always hides values, and a Settings toggle applies the same mode to the normal widget. `Hisaab (Cycle)` is a circular gauge of % of the cycle's spend cap used.
+3. The **lock screen and home screen widgets** show today's budget, the amount used and the % used. A **hide-values mode** shows only percentages. The `Hisaab (Private)` widget always hides values, and a Settings toggle applies the same mode to the normal widget. `Hisaab (Cycle)` is a circular gauge of % of the cycle's spend cap used.
 4. **Spends come from bank SMS** through a Shortcuts automation, plus manual add/edit.
    Every money movement is stored as a `Spend` entry with `kind` (spend, cardBill, savings, refund, reversal, cashback, otherCredit), `account` (bank / creditCard), `card`, `ref`, `reverses` and `excluded`. `Counting` (BudgetCore) turns entries into signed counted amounts: savings and otherCredit count 0, credits count negative on their own date, a linked reversal cancels its original, and a card bill counts only what open card charges (minus card credits) do not cover. The engine applies `Counting` to ALL entries before any budget math. Never count twice, and never count only one cycle's entries. Savings are reported as `CycleSummary.invested`.
 5. **Charts:** green bars above zero mean saved, red bars below zero mean exceeded.
@@ -41,7 +41,7 @@ scripts/build-ipa.sh         macOS-only: xcodegen → xcodebuild (unsigned) → 
 Packages/BudgetCore/         Pure Swift package: BudgetEngine, SMSParser, Spend, Ledger/LedgerStore + XCTest tests
 Shared/                      Compiled into BOTH app and widget: AppGroup (storage location), Format
 App/                         SwiftUI app: LedgerModel, Views/, Intents/LogBankSMSIntent.swift
-Widget/                      WidgetKit lock screen widgets (accessoryRectangular / Circular / Inline)
+Widget/                      WidgetKit widgets: lock screen (accessoryRectangular / Circular / Inline) + home screen (systemSmall / Medium)
 ```
 
 ## Rules for working in this repo

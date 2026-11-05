@@ -28,12 +28,12 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Hide amounts on lock screen", isOn: Binding(
+                    Toggle("Hide amounts in widgets", isOn: Binding(
                         get: { model.ledger.settings.hideValues },
                         set: { model.setHideValues($0) }
                     ))
                 } footer: {
-                    Text("The \"Hisaab\" widget then shows percentages only. The \"Hisaab (Private)\" widget always hides amounts.")
+                    Text("The \"Hisaab\" and \"Hisaab (Cycle)\" widgets then show percentages only, on the lock screen and the home screen. The \"Hisaab (Private)\" widget always hides amounts.")
                 }
 
                 Section {
