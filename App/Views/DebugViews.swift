@@ -42,7 +42,7 @@ struct ParserPlaygroundView: View {
     @State private var lastOutcome: String?
 
     private var result: ParseResult? {
-        text.isEmpty ? nil : SMSParser().parse(text)
+        text.isEmpty ? nil : SMSParser(settings: model.ledger.settings).parse(text)
     }
 
     var body: some View {
@@ -58,12 +58,15 @@ struct ParserPlaygroundView: View {
 
             if let result {
                 Section("Result") {
-                    switch result {
-                    case .debit(let parsed):
+                    if let parsed = result.parsed {
                         LabeledContent("Amount", value: "\(parsed.amount)")
                         LabeledContent("Merchant", value: parsed.merchant ?? "—")
+                        LabeledContent("Type", value: parsed.kind.title)
+                        LabeledContent("Account", value: parsed.account == .creditCard ? "Credit card" : "Bank")
+                        LabeledContent("Card", value: parsed.card ?? "—")
+                        LabeledContent("Reference", value: parsed.ref ?? "—")
                         LabeledContent("Rule", value: parsed.ruleID)
-                    case .ignored(let reason):
+                    } else if case .ignored(let reason) = result {
                         LabeledContent("Ignored", value: reason)
                     }
                 }

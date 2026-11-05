@@ -36,13 +36,53 @@ Tap **+** to add a spend.
 
 ## Spends
 
-The **Spends** tab lists every spend, newest first. A message icon means it came from an SMS. A hand icon means you added it.
+The **Spends** tab lists all money in and out, newest first. A message icon means it came from an SMS. A hand icon means you added it. Other icons show the type. Money in has a **+** and is green.
 
 - **Add**: tap **+**. Use this for cash and for anything the SMS automation missed.
-- **Edit**: tap a spend to change the amount, merchant, note or date. Spends from SMS also show the original message.
-- **Delete**: swipe left on a spend, then tap **Delete**. Budgets recalculate immediately.
+- **Edit**: tap an entry to change the amount, merchant, note, date or type. Entries from SMS also show the original message and the reference number.
+- **Delete**: swipe left on an entry, then tap **Delete**. Budgets recalculate immediately.
+- **Quick fixes**: touch and hold an entry. Then select **Mark as** and a type, **On a credit card**, or **Don't count it**.
+
+## Types
+
+| Type | How it counts |
+|---|---|
+| **Spend** | In full, on its date. |
+| **Credit card bill payment** | Only the part that your tracked card spends do not cover. |
+| **Savings / investment** | Not counted. It is shown as **Invested** on the Today screen. |
+| **Refund** | Lowers what you spent, on the day the money comes back. |
+| **Cashback** | Lowers what you spent, on the day it is credited. |
+| **Reversal** | Cancels the payment it is linked to, as if it never happened. If it is not linked, it counts like a refund. |
+| **Other credit** | Not counted. Examples are salary and money from friends. |
+
+**Don't count** keeps an entry in the list but counts it as 0. Use it for transfers to your own accounts.
+
+### Credit cards
+
+A credit card purchase counts on the day you buy. The card bill does not count it again:
+
+- A bill covers the open card spends from on or before the bill's date, oldest first. If the bill and the spend both have card digits, the digits must match.
+- If you pay less than the open card spends, the bill counts 0. The rest stays open for the next bill.
+- A refund or cashback on a card makes the next bill smaller. Hisaab takes this into account, so the bill does not count it again.
+
+An SMS that says "credit card" is a card spend. An SMS that pays a card bill (for example "towards your Credit Card", "card bill" or a payment to CRED) is a bill payment. The card company's "payment received" SMS is ignored, because the bank's debit SMS for the same payment is counted.
+
+Some banks write only "Card XX1234". To make Hisaab treat these as credit card spends, add the card's last 4 digits in **Settings → Credit cards**. This applies to new SMS only. To fix older entries, change them with a long press.
+
+### Savings
+
+A debit to an investment platform is savings, not a spend. Hisaab knows Groww, Zerodha, Upstox, Kuvera, Paytm Money, Angel One, INDmoney, ET Money, smallcase, ICCL, NSE Clearing, BSE, CAMS, KFintech and NPS. It also finds SMS that say "mutual fund" or "SIP". To add another recipient, go to **Settings → Savings recipients** and enter a word from its name or UPI ID.
+
+### Refunds, reversals and cashback
+
+- When a reversal SMS arrives, Hisaab links it to the payment it cancels. It first looks for the same reference number. If there is none, it looks for the most recent debit with the same amount in the 7 days before. Each debit can be cancelled only once. To change the link, edit the reversal and pick the payment in **Cancels**.
+- If you delete a payment that a reversal cancels, the reversal is set to **Don't count**.
+- SMS about money that is still on its way are ignored. Examples: "will be reversed", "will be refunded", "refund initiated". The SMS that says the money arrived is the one that counts.
+- If your bank and your UPI app both send an SMS for the same payment, the second one is skipped when the reference number and amount match.
 
 ## Trends
+
+Tap a bar to see its date, the amount saved or exceeded, the amount spent, and the % used. Tap the bar again to close it.
 
 - **Daily**: one bar for each day of the current cycle. The bar is that day's budget minus that day's spend. Green bars above the line mean you saved. Red bars below the line mean you overspent.
 - **Monthly**: one bar for each cycle. The bar is the spend cap minus the total spent.

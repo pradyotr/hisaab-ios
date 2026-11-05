@@ -24,10 +24,14 @@ final class LedgerModel {
     }
 
     func saveConfig(_ config: BudgetConfig) { mutate { $0.config = config } }
-    func add(_ transaction: Spend) { mutate { $0.add(transaction) } }
+    func add(_ transaction: Spend, linkReversal: Bool = true) {
+        mutate { $0.add(transaction, linkReversal: linkReversal) }
+    }
     func update(_ transaction: Spend) { mutate { $0.update(transaction) } }
     func delete(ids: Set<UUID>) { mutate { $0.remove(ids: ids) } }
     func setHideValues(_ hide: Bool) { mutate { $0.settings.hideValues = hide } }
+    func setCreditCards(_ cards: [String]) { mutate { $0.settings.creditCards = cards } }
+    func setSavingsKeywords(_ words: [String]) { mutate { $0.settings.savingsKeywords = words } }
     func clearLog() { mutate { $0.log.removeAll() } }
 
     private func mutate(_ body: (inout Ledger) -> Void) {

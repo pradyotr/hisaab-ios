@@ -5,14 +5,31 @@ public struct ParsedSMS: Equatable, Sendable {
     public let merchant: String?
     /// Which rule produced this result (shown in the debug log).
     public let ruleID: String
+    public let kind: EntryKind
+    /// Credit card or bank account.
+    public let account: PaymentAccount
+    /// Last 4 digits of the credit card (the card used, or for `.cardBill` the card being paid), if named.
+    public let card: String?
+    /// Bank / UPI reference number (6+ digits), if the SMS has one.
+    public let ref: String?
 }
 
 public enum ParseResult: Equatable, Sendable {
+    /// Money out: spend, card bill or savings.
     case debit(ParsedSMS)
+    /// Money in: refund, reversal, cashback or other credit.
+    case credit(ParsedSMS)
     case ignored(reason: String)
+
+    public var parsed: ParsedSMS? {
+        switch self {
+        case .debit(let parsed), .credit(let parsed): return parsed
+        case .ignored: return nil
+        }
+    }
 }
 
-/// A parsing rule. All patterns are case-insensitive NSRegularExpression patterns.
+/// A parsing rule for debits. All patterns are case-insensitive NSRegularExpression patterns.
 public struct SMSRule: Sendable {
     public let id: String
     /// The rule only applies if this pattern matches the message.
@@ -53,23 +70,80 @@ extension SMSRule {
     )
 }
 
-/// Turns a bank SMS into a debit amount (+ merchant), or explains why it was ignored.
+/// Turns a bank SMS into a debit or a credit (amount, merchant, kind, card, reference), or explains why it was ignored.
+///
+/// Order: ignore rules → card issuer's "payment received" → credit? → failed → debit rules.
 public struct SMSParser: Sendable {
     public static let currencyAmountPattern = #"(?:\brs\.?|\binr|₹)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)"#
 
-    /// Checked first. Any match means the message is not a completed spend.
+    /// Checked first. Any match means the message is not a completed money movement.
     static let ignoreRules: [(pattern: String, reason: String)] = [
         (#"\botp\b|one[- ]time password|verification code"#, "OTP / verification"),
-        (#"\b(refund(ed)?|revers(ed|al))\b"#, "refund / reversal"),
-        (#"\bwill be (debited|deducted|charged)\b|\bis due\b|\bdue (on|by|date)\b"#, "upcoming payment / reminder"),
+        (#"\bwill be (debited|deducted|charged|credited|refunded|reversed)\b|\bis due\b|\bdue (on|by|date)\b"#,
+         "upcoming payment / reminder"),
+        (#"\brefund\b.{0,40}\binitiated\b|\binitiated\b.{0,40}\brefund\b"#, "refund initiated (not received yet)"),
         (#"\brequested money\b|\bcollect request\b|\bhas requested\b"#, "UPI request (not paid)"),
-        (#"\b(declined|failed|unsuccessful)\b"#, "failed transaction"),
+    ]
+    /// Checked after credits, so "txn failed, amount reversed" is still read as a reversal.
+    static let failedPattern = #"\b(declined|failed|unsuccessful)\b"#
+
+    // MARK: Credits
+
+    /// Always a credit, wherever it appears.
+    static let strongCreditPattern = #"\b(refund(ed)?|revers(ed|al))\b"#
+    /// A credit only if it comes before any debit word ("Rs 500 debited and credited to shop@upi" is a debit).
+    static let weakCreditPattern = #"\b(credited|received|cash\s?back)\b"#
+    static let creditMerchantPattern = #"\b(?:from|by|at)\s+([a-z0-9][a-z0-9 &._@*'\-/]{1,40}?)(?=\s+(?:on|via|ref|upi|avl|to|into|in|txn|dated|using|towards|for|credited|has|is|was)\b|[,;\n]|\.(?:\s|$)|$)"#
+    /// The card issuer's "payment received" SMS. The bank's debit SMS for the same payment is the one that counts.
+    static let cardPaymentReceivedPattern = #"\bpayment\b.{0,80}\b(received|credited)\b|\b(received|credited)\b.{0,40}\bpayment\b"#
+    static let debitWordsPattern = #"\b(debited|spent|sent|withdrawn)\b"#
+
+    // MARK: Debit kinds
+
+    /// A debit that is paying a credit card bill (from a bank account, or through an app like CRED).
+    static let cardBillPatterns: [String] = [
+        #"\bcredit\s*card\s*(bill|payment|dues?|repayment)\b"#,
+        #"\bcc\s*(bill|payment)\b"#,
+        #"\bcard\s*bill\b"#,
+        #"\b(towards|for)\s+(your\s+)?([a-z]+\s+){0,3}credit\s*card\b"#,
+        #"\bcred\.club\b|\bcred\s+club\b|\b(to|vpa|info:?)\s+cred\b"#,
+    ]
+    static let knownCardBillWordsPattern = #"\b(bill|towards|repay(ment)?)\b"#
+    /// A debit to an investment platform or fund: savings, not a spend. Users add more in Settings.
+    public static let savingsPatterns: [String] = [
+        #"\bgroww\b"#, #"\bzerodha\b"#, #"\bupstox\b"#, #"\bkuvera\b"#, #"\bpaytm\s*money\b"#,
+        #"\bangel\s*(one|broking)\b"#, #"\bindmoney\b"#, #"\bet\s*money\b"#, #"\bsmallcase\b"#,
+        #"\biccl\b|\bindian\s+clearing\b"#, #"\bnse\s*clearing\b|\bnsccl\b"#, #"\bbse\b"#,
+        #"\bmutual\s*funds?\b"#, #"\bsip\b"#, #"\bcams\b|\bcamsonline\b"#, #"\bkfin(tech)?\b"#, #"\bnps\b"#,
     ]
 
-    public var rules: [SMSRule]
+    // MARK: Cards and references
 
-    public init(rules: [SMSRule] = SMSRule.bankRules + [SMSRule.generic]) {
+    static let creditCardPattern = #"\bcredit\s*card\b"#
+    /// Capture group 1 = last 4 digits of a card ("Card XX1234", "card ending 1234", "CC x1234").
+    static let cardNumberPattern = #"\b(?:card|cc)\b[^0-9]{0,20}?(\d{4})\b"#
+    /// Capture group 1 = reference number ("UPI Ref No 612345678901", "RRN: 123456", "UTR 98765432").
+    static let refPattern = #"\b(?:ref(?:erence)?|rrn|utr|txn\s*id|transaction\s*id)(?:\s*(?:no|num(?:ber)?|id))?[\s.:#-]*([0-9]{6,})\b"#
+
+    public var rules: [SMSRule]
+    /// Last 4 digits of the user's credit cards (Settings). An SMS that names one of these cards is a card
+    /// spend (or a card bill / card refund), even when it does not say "credit card".
+    public var creditCards: Set<String>
+    /// Extra savings words from Settings, matched literally and case-insensitively.
+    public var savingsKeywords: [String]
+
+    public init(rules: [SMSRule] = SMSRule.bankRules + [SMSRule.generic],
+                creditCards: [String] = [], savingsKeywords: [String] = []) {
         self.rules = rules
+        self.creditCards = Set(creditCards.compactMap(Counting.normalizedCard))
+        self.savingsKeywords = savingsKeywords
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Uses the cards and savings words from the user's settings.
+    public init(settings: AppSettings) {
+        self.init(creditCards: settings.creditCards, savingsKeywords: settings.savingsKeywords)
     }
 
     public func parse(_ message: String) -> ParseResult {
@@ -79,16 +153,94 @@ public struct SMSParser: Sendable {
         for rule in Self.ignoreRules where RX.matches(rule.pattern, text) {
             return .ignored(reason: rule.reason)
         }
+        if RX.matches(Self.cardPaymentReceivedPattern, text), !RX.matches(Self.debitWordsPattern, text) {
+            return .ignored(reason: "card payment received (the bank debit SMS is counted)")
+        }
+
+        if isCredit(text) {
+            return parseCredit(text)
+        }
+
+        if RX.matches(Self.failedPattern, text) {
+            return .ignored(reason: "failed transaction")
+        }
 
         for rule in rules where RX.matches(rule.mustMatch, text) {
             guard let amount = Self.firstAmount(pattern: rule.amount, in: text), amount > 0 else { continue }
-            let merchant = rule.merchant.flatMap { RX.firstCapture($0, in: text) }.flatMap(Self.cleanMerchant)
-            return .debit(ParsedSMS(amount: amount, merchant: merchant, ruleID: rule.id))
+            var merchant = rule.merchant.flatMap { RX.firstCapture($0, in: text) }.flatMap(Self.cleanMerchant)
+            let (kind, account, card) = classifyDebit(text)
+            if kind == .cardBill, merchant == nil { merchant = "Credit card bill" }
+            return .debit(ParsedSMS(amount: amount, merchant: merchant, ruleID: rule.id, kind: kind,
+                                    account: account, card: card, ref: Self.reference(in: text)))
         }
-
-        if RX.matches(#"\bcredited\b"#, text) { return .ignored(reason: "credit") }
         return .ignored(reason: "no rule matched")
     }
+
+    // MARK: Credits
+
+    func isCredit(_ text: String) -> Bool {
+        if RX.matches(Self.strongCreditPattern, text) { return true }
+        guard let credit = RX.firstMatchLocation(Self.weakCreditPattern, in: text) else { return false }
+        let debitPatterns = rules.map(\.mustMatch) + [Self.debitWordsPattern]
+        let debit = debitPatterns.compactMap { RX.firstMatchLocation($0, in: text) }.min()
+        return debit.map { credit < $0 } ?? true
+    }
+
+    func parseCredit(_ text: String) -> ParseResult {
+        guard let amount = Self.firstAmount(pattern: Self.currencyAmountPattern, in: text), amount > 0 else {
+            return .ignored(reason: "credit without an amount")
+        }
+        let kind: EntryKind
+        if RX.matches(#"\brevers(ed|al)\b"#, text) || (RX.matches(#"\brefund(ed)?\b"#, text) && RX.matches(Self.failedPattern, text)) {
+            kind = .reversal
+        } else if RX.matches(#"\brefund(ed)?\b"#, text) {
+            kind = .refund
+        } else if RX.matches(#"\bcash\s?back\b"#, text) {
+            kind = .cashback
+        } else {
+            kind = .otherCredit
+        }
+        let (onCard, card) = creditCardMention(text)
+        let merchant = RX.firstCapture(Self.creditMerchantPattern, in: text).flatMap(Self.cleanMerchant)
+        return .credit(ParsedSMS(amount: amount, merchant: merchant, ruleID: "credit", kind: kind,
+                                 account: onCard ? .creditCard : .bank, card: onCard ? card : nil,
+                                 ref: Self.reference(in: text)))
+    }
+
+    // MARK: Debits
+
+    /// Card bill, savings, or spend (+ which account, + card digits).
+    func classifyDebit(_ text: String) -> (EntryKind, PaymentAccount, String?) {
+        let (onCard, card) = creditCardMention(text)
+        let isKnownCard = card.map { creditCards.contains($0) } ?? false
+        if Self.cardBillPatterns.contains(where: { RX.matches($0, text) })
+            || (isKnownCard && RX.matches(Self.knownCardBillWordsPattern, text)) {
+            return (.cardBill, .bank, card)
+        }
+        let account: PaymentAccount = onCard ? .creditCard : .bank
+        if isSavings(text) {
+            return (.savings, account, onCard ? card : nil)
+        }
+        return (.spend, account, onCard ? card : nil)
+    }
+
+    func isSavings(_ text: String) -> Bool {
+        Self.savingsPatterns.contains { RX.matches($0, text) }
+            || savingsKeywords.contains { RX.matches(NSRegularExpression.escapedPattern(for: $0), text) }
+    }
+
+    /// (is it a credit card?, last 4 digits of the card named in the SMS).
+    func creditCardMention(_ text: String) -> (Bool, String?) {
+        let card = RX.firstCapture(Self.cardNumberPattern, in: text)
+        let isKnownCard = card.map { creditCards.contains($0) } ?? false
+        return (isKnownCard || RX.matches(Self.creditCardPattern, text), card)
+    }
+
+    static func reference(in text: String) -> String? {
+        RX.firstCapture(refPattern, in: text)
+    }
+
+    // MARK: Helpers
 
     /// First amount match that is not a balance or a limit ("Avl Bal Rs 10,000").
     static func firstAmount(pattern: String, in text: String) -> Decimal? {
@@ -127,8 +279,14 @@ enum RX {
     }
 
     static func matches(_ pattern: String, _ text: String) -> Bool {
-        guard let rx = compile(pattern) else { return false }
-        return rx.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+        firstMatchLocation(pattern, in: text) != nil
+    }
+
+    /// UTF-16 offset of the first match, or nil.
+    static func firstMatchLocation(_ pattern: String, in text: String) -> Int? {
+        guard let rx = compile(pattern),
+              let match = rx.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else { return nil }
+        return match.range.location
     }
 
     /// (capture group 1, its range) for every match.

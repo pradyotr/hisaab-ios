@@ -43,6 +43,9 @@ struct TodayView: View {
                 MoneyRow(title: "Remaining", value: snap.cycle.difference, currencyCode: code,
                          tint: Format.color(forDifference: snap.cycle.difference))
                 LabeledContent("Days left", value: "\(snap.daysLeftIncludingToday)")
+                if snap.cycle.invested > 0 {
+                    MoneyRow(title: "Invested (not spent)", value: snap.cycle.invested, currencyCode: code)
+                }
             }
         }
     }

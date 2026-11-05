@@ -34,7 +34,10 @@ public struct CycleSummary: Equatable, Sendable, Identifiable {
     public var id: Date { cycle.start }
     public let cycle: BudgetCycle
     public let cap: Decimal
+    /// Spends minus refunds / cashback (see `Counting`). Can be negative in a cycle with only refunds.
     public let spent: Decimal
+    /// Money moved into investments (savings entries). Not part of `spent`.
+    public var invested: Decimal = 0
     /// Positive = under the cap (green), negative = over (red).
     public var difference: Decimal { cap - spent }
 
@@ -87,8 +90,62 @@ public struct BudgetEngine: Sendable {
     }
 
     /// Status for each day of `cycle`, stopping after the day that contains `through` (if given).
+    /// Pass ALL entries: they are counted first (card bills, refunds, reversals, savings; see `Counting`).
     public func dayStatuses(for cycle: BudgetCycle, transactions: [Spend], through last: Date? = nil) -> [DayStatus] {
-        let inCycle = transactions.filter { cycle.contains($0.date) }
+        dayStatuses(for: cycle, counted: Counting.countedEntries(transactions), through: last)
+    }
+
+    /// Pass ALL entries: they are counted first (see `Counting`).
+    public func summary(for cycle: BudgetCycle, transactions: [Spend]) -> CycleSummary {
+        summary(for: cycle, Counted(transactions))
+    }
+
+    /// Summaries from the cycle of the earliest entry up to the cycle containing `date`.
+    /// POC limitation: uses the *current* config for past cycles.
+    public func cycleSummaries(transactions: [Spend], upTo date: Date) -> [CycleSummary] {
+        let counted = Counted(transactions)
+        let current = cycle(containing: date)
+        var cycles: [BudgetCycle] = []
+        let dates = counted.spent.map(\.date) + counted.invested.map(\.date)
+        if let earliest = dates.min(), earliest < current.start {
+            var c = cycle(containing: earliest)
+            while c.start < current.start {
+                cycles.append(c)
+                c = cycle(containing: c.end)
+            }
+        }
+        cycles.append(current)
+        return cycles.map { summary(for: $0, counted) }
+    }
+
+    public func snapshot(at date: Date, transactions: [Spend]) -> TodaySnapshot {
+        let counted = Counted(transactions)
+        let c = cycle(containing: date)
+        let statuses = dayStatuses(for: c, counted: counted.spent, through: date)
+        let today = statuses.last
+            ?? DayStatus(date: calendar.startOfDay(for: date), budget: 0, spent: 0, remainingBeforeDay: 0)
+        return TodaySnapshot(
+            day: today,
+            cycle: summary(for: c, counted),
+            daysLeftIncludingToday: max(c.days.count - max(statuses.count - 1, 0), 0)
+        )
+    }
+
+    // MARK: On counted entries. Never count twice.
+
+    /// Entries with amounts replaced by what they add to "spent" (signed) and to "invested".
+    private struct Counted {
+        let spent: [Spend]
+        let invested: [Spend]
+
+        init(_ entries: [Spend]) {
+            spent = Counting.countedEntries(entries)
+            invested = Counting.investedEntries(entries)
+        }
+    }
+
+    private func dayStatuses(for cycle: BudgetCycle, counted: [Spend], through last: Date?) -> [DayStatus] {
+        let inCycle = counted.filter { cycle.contains($0.date) }
         let grouped = Dictionary(grouping: inCycle) { calendar.startOfDay(for: $0.date) }
         let spentByDay = grouped.mapValues { $0.reduce(Decimal(0)) { $0 + $1.amount } }
 
@@ -109,36 +166,10 @@ public struct BudgetEngine: Sendable {
         return result
     }
 
-    public func summary(for cycle: BudgetCycle, transactions: [Spend]) -> CycleSummary {
-        let spent = transactions.filter { cycle.contains($0.date) }.reduce(Decimal(0)) { $0 + $1.amount }
-        return CycleSummary(cycle: cycle, cap: config.spendCap, spent: spent)
-    }
-
-    /// Summaries from the cycle of the earliest transaction up to the cycle containing `date`.
-    /// POC limitation: uses the *current* config for past cycles.
-    public func cycleSummaries(transactions: [Spend], upTo date: Date) -> [CycleSummary] {
-        let current = cycle(containing: date)
-        var cycles: [BudgetCycle] = []
-        if let earliest = transactions.map(\.date).min(), earliest < current.start {
-            var c = cycle(containing: earliest)
-            while c.start < current.start {
-                cycles.append(c)
-                c = cycle(containing: c.end)
-            }
+    private func summary(for cycle: BudgetCycle, _ counted: Counted) -> CycleSummary {
+        func total(_ entries: [Spend]) -> Decimal {
+            entries.filter { cycle.contains($0.date) }.reduce(Decimal(0)) { $0 + $1.amount }
         }
-        cycles.append(current)
-        return cycles.map { summary(for: $0, transactions: transactions) }
-    }
-
-    public func snapshot(at date: Date, transactions: [Spend]) -> TodaySnapshot {
-        let c = cycle(containing: date)
-        let statuses = dayStatuses(for: c, transactions: transactions, through: date)
-        let today = statuses.last
-            ?? DayStatus(date: calendar.startOfDay(for: date), budget: 0, spent: 0, remainingBeforeDay: 0)
-        return TodaySnapshot(
-            day: today,
-            cycle: summary(for: c, transactions: transactions),
-            daysLeftIncludingToday: max(c.days.count - max(statuses.count - 1, 0), 0)
-        )
+        return CycleSummary(cycle: cycle, cap: config.spendCap, spent: total(counted.spent), invested: total(counted.invested))
     }
 }

@@ -3,9 +3,26 @@ import Foundation
 public struct AppSettings: Codable, Equatable, Sendable {
     /// Lock screen shows percentages only.
     public var hideValues: Bool
+    /// Last 4 digits of the user's credit cards. SMS that mention one of these are treated as card spends / bills,
+    /// even when the SMS only says "Card XX1234".
+    public var creditCards: [String]
+    /// Extra words that mark a debit as savings (an investment), on top of the built-in list
+    /// in `SMSParser.savingsPatterns`. Matched case-insensitively anywhere in the SMS, e.g. "mybroker".
+    public var savingsKeywords: [String]
 
-    public init(hideValues: Bool = false) {
+    public init(hideValues: Bool = false, creditCards: [String] = [], savingsKeywords: [String] = []) {
         self.hideValues = hideValues
+        self.creditCards = creditCards
+        self.savingsKeywords = savingsKeywords
+    }
+
+    private enum CodingKeys: String, CodingKey { case hideValues, creditCards, savingsKeywords }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hideValues = try c.decodeIfPresent(Bool.self, forKey: .hideValues) ?? false
+        creditCards = try c.decodeIfPresent([String].self, forKey: .creditCards) ?? []
+        savingsKeywords = try c.decodeIfPresent([String].self, forKey: .savingsKeywords) ?? []
     }
 }
 
@@ -26,15 +43,22 @@ public struct LogEntry: Codable, Equatable, Identifiable, Sendable {
 /// All app data. Stored as one JSON file in the App Group container, shared by the app, the App Intent and the widget.
 public struct Ledger: Codable, Equatable, Sendable {
     public static let maxLogEntries = 200
+    /// Bump when the stored shape changes, and add the upgrade step in `migrate()`.
+    /// 0 = files written before versioning (spends only). 1 = entries with kind / account / ref / reverses / excluded.
+    public static let currentSchemaVersion = 1
+    /// A reversal is linked automatically to a matching debit from at most this long before it.
+    public static let reversalWindow: TimeInterval = 7 * 86_400
 
+    public var schemaVersion: Int
     public var config: BudgetConfig?
-    /// Newest first.
+    /// All money movements (spends, card bills, savings, credits). Newest first.
     public var transactions: [Spend]
     public var settings: AppSettings
     /// Newest first. Debug log for the parser and storage, shown in Settings > Debug log.
     public var log: [LogEntry]
 
     public init(config: BudgetConfig? = nil, transactions: [Spend] = [], settings: AppSettings = AppSettings(), log: [LogEntry] = []) {
+        self.schemaVersion = Self.currentSchemaVersion
         self.config = config
         self.transactions = transactions
         self.settings = settings
@@ -44,22 +68,34 @@ public struct Ledger: Codable, Equatable, Sendable {
     // Tolerant decoding: new fields must not make old files unreadable.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
         config = try c.decodeIfPresent(BudgetConfig.self, forKey: .config)
         transactions = try c.decodeIfPresent([Spend].self, forKey: .transactions) ?? []
         settings = try c.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings()
         log = try c.decodeIfPresent([LogEntry].self, forKey: .log) ?? []
+        migrate()
     }
 
-    /// Adds a transaction. Returns false if it is a duplicate SMS (same text within `dedupeWindow` seconds).
-    @discardableResult
-    public mutating func add(_ transaction: Spend, dedupeWindow: TimeInterval = 600) -> Bool {
-        if transaction.source == .sms, let raw = transaction.rawText {
-            let isDuplicate = transactions.contains {
-                $0.rawText == raw && abs($0.date.timeIntervalSince(transaction.date)) < dedupeWindow
-            }
-            if isDuplicate { return false }
+    /// Upgrades data decoded from an older file, one version at a time.
+    private mutating func migrate() {
+        if schemaVersion < 1 {
+            // Version 0 stored debits only. `Spend`'s decoder already defaults them to kind .spend, account .bank.
+            schemaVersion = 1
         }
-        transactions.append(transaction)
+    }
+
+    /// Adds an entry. Returns false if it is a duplicate SMS:
+    /// the same text within `dedupeWindow` seconds, or the same reference number, direction and amount
+    /// (the bank and the UPI app often both send an SMS for one payment).
+    /// A reversal with no link is linked to its matching debit, if one is found and `linkReversal` is true.
+    @discardableResult
+    public mutating func add(_ transaction: Spend, dedupeWindow: TimeInterval = 600, linkReversal: Bool = true) -> Bool {
+        if transaction.source == .sms, isDuplicate(transaction, dedupeWindow: dedupeWindow) { return false }
+        var entry = transaction
+        if linkReversal, entry.kind == .reversal, entry.reverses == nil {
+            entry.reverses = reversalTarget(for: entry)
+        }
+        transactions.append(entry)
         transactions.sort { $0.date > $1.date }
         return true
     }
@@ -70,8 +106,52 @@ public struct Ledger: Codable, Equatable, Sendable {
         transactions.sort { $0.date > $1.date }
     }
 
+    /// Removes entries. A reversal linked to a removed entry is kept but excluded:
+    /// the original is gone, so the reversal must not count as money back.
     public mutating func remove(ids: Set<UUID>) {
         transactions.removeAll { ids.contains($0.id) }
+        for index in transactions.indices {
+            if let target = transactions[index].reverses, ids.contains(target) {
+                transactions[index].reverses = nil
+                transactions[index].excluded = true
+            }
+        }
+    }
+
+    /// The debit a reversal most likely cancels: same reference number if both have one; otherwise the most
+    /// recent debit with the same amount (and card, if both name one) within `reversalWindow` before it,
+    /// that no other reversal has claimed.
+    public func reversalTarget(for reversal: Spend) -> UUID? {
+        let claimed = Set(transactions.compactMap { $0.id == reversal.id ? nil : $0.reverses })
+        let candidates = transactions.filter {
+            ($0.kind == .spend || $0.kind == .savings)
+                && !claimed.contains($0.id)
+                && $0.date <= reversal.date
+                && reversal.date.timeIntervalSince($0.date) <= Self.reversalWindow
+        }
+        if let ref = reversal.ref, let match = candidates.first(where: { $0.ref == ref }) {
+            return match.id
+        }
+        let card = Counting.normalizedCard(reversal.card)
+        return candidates
+            .filter { $0.amount == reversal.amount }
+            .filter { card == nil || Counting.normalizedCard($0.card) == nil || Counting.normalizedCard($0.card) == card }
+            .max { $0.date < $1.date }?
+            .id
+    }
+
+    private func isDuplicate(_ entry: Spend, dedupeWindow: TimeInterval) -> Bool {
+        transactions.contains { other in
+            if let raw = entry.rawText, other.rawText == raw,
+               abs(other.date.timeIntervalSince(entry.date)) < dedupeWindow {
+                return true
+            }
+            if let ref = entry.ref, other.ref == ref,
+               other.kind.isCredit == entry.kind.isCredit, other.amount == entry.amount {
+                return true
+            }
+            return false
+        }
     }
 
     public mutating func appendLog(_ message: String, rawText: String? = nil, at date: Date = Date()) {
@@ -91,6 +171,54 @@ public struct LedgerStore: Sendable {
     /// Returns an empty ledger if the file does not exist.
     /// If the file exists but cannot be decoded, it is moved aside (never silently overwritten).
     public func load() -> Ledger {
+        (try? coordinated(writing: false) { rawLoad() }) ?? rawLoad()
+    }
+
+    public func save(_ ledger: Ledger) throws {
+        try coordinated(writing: true) { try rawSave(ledger) }
+    }
+
+    /// Load, change, save, as one coordinated write. Always re-reads first, because another process
+    /// (widget / App Intent) may have written. The file coordinator makes the other process wait.
+    @discardableResult
+    public func update(_ body: (inout Ledger) -> Void) throws -> Ledger {
+        try coordinated(writing: true) {
+            var ledger = rawLoad()
+            body(&ledger)
+            try rawSave(ledger)
+            return ledger
+        }
+    }
+
+    // MARK: Private. Never call `coordinated` from inside another `coordinated` block.
+
+    #if canImport(Darwin)
+    /// NSFileCoordinator serialises access across the app, the App Intent and the widget processes.
+    private func coordinated<T>(writing: Bool, _ body: () throws -> T) throws -> T {
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordinationError: NSError?
+        var result: Result<T, Error>?
+        if writing {
+            coordinator.coordinate(writingItemAt: url, options: .forMerging, error: &coordinationError) { _ in
+                result = Result(catching: { try body() })
+            }
+        } else {
+            coordinator.coordinate(readingItemAt: url, options: [], error: &coordinationError) { _ in
+                result = Result(catching: { try body() })
+            }
+        }
+        if let coordinationError { throw coordinationError }
+        guard let result else { throw CocoaError(.fileReadUnknown) }
+        return try result.get()
+    }
+    #else
+    /// Linux / Windows (tests only): one process, nothing to coordinate.
+    private func coordinated<T>(writing: Bool, _ body: () throws -> T) throws -> T {
+        try body()
+    }
+    #endif
+
+    private func rawLoad() -> Ledger {
         guard let data = try? Data(contentsOf: url) else { return Ledger() }
         do {
             return try JSONDecoder().decode(Ledger.self, from: data)
@@ -104,19 +232,10 @@ public struct LedgerStore: Sendable {
         }
     }
 
-    public func save(_ ledger: Ledger) throws {
+    private func rawSave(_ ledger: Ledger) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(ledger).write(to: url, options: .atomic)
-    }
-
-    /// Load, change, save. Always re-reads first, because another process (widget / App Intent) may have written.
-    @discardableResult
-    public func update(_ body: (inout Ledger) -> Void) throws -> Ledger {
-        var ledger = load()
-        body(&ledger)
-        try save(ledger)
-        return ledger
     }
 }

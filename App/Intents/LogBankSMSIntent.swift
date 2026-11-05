@@ -34,12 +34,22 @@ struct LogBankSMSIntent: AppIntent {
     static func process(message: String, at date: Date) throws -> String {
         var outcome = ""
         try AppGroup.store.update { ledger in
-            switch SMSParser().parse(message) {
-            case .debit(let parsed):
-                let transaction = Spend(amount: parsed.amount, date: date, merchant: parsed.merchant,
-                                              source: .sms, rawText: message)
-                if ledger.add(transaction) {
-                    outcome = "Logged \(parsed.amount) \(parsed.merchant ?? "") [\(parsed.ruleID)]"
+            let result = SMSParser(settings: ledger.settings).parse(message)
+            switch result {
+            case .debit(let parsed), .credit(let parsed):
+                let entry = Spend(amount: parsed.amount, date: date, merchant: parsed.merchant,
+                                  source: .sms, rawText: message, kind: parsed.kind, account: parsed.account,
+                                  card: parsed.card, ref: parsed.ref)
+                if ledger.add(entry) {
+                    var details = [parsed.ruleID, parsed.kind.rawValue]
+                    if parsed.account == .creditCard { details.append("credit card") }
+                    if let card = parsed.card { details.append("card \(card)") }
+                    if let ref = parsed.ref { details.append("ref \(ref)") }
+                    if parsed.kind == .reversal {
+                        let linked = ledger.transactions.first { $0.id == entry.id }?.reverses != nil
+                        details.append(linked ? "linked to original" : "no original found")
+                    }
+                    outcome = "Logged \(parsed.amount) \(parsed.merchant ?? "") [\(details.joined(separator: ", "))]"
                 } else {
                     outcome = "Duplicate SMS, skipped"
                 }
