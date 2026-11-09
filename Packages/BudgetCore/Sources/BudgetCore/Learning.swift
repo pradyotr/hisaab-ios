@@ -70,7 +70,7 @@ enum FeatureExtractor {
 
         if let text = entry.rawText {
             let words = text.lowercased().split { !$0.isLetter }.filter { $0.count >= 3 }
-            for word in Set(words.map(String.init)) { add(.smsWord, word) }
+            for word in Set(words.map { String($0) }) { add(.smsWord, word) }
         }
         return result
     }
