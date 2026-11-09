@@ -84,6 +84,10 @@ public struct SMSParser: Sendable {
         (#"\brefund\b.{0,40}\binitiated\b|\binitiated\b.{0,40}\brefund\b"#, "refund initiated (not received yet)"),
         (#"\brequested money\b|\bcollect request\b|\bhas requested\b"#, "UPI request (not paid)"),
     ]
+    /// Offer wording: "Get 5% Extra Cashback", "Min. Trxn.: Rs. 6000", "Max. Cashback: Rs. 750".
+    static let promoPattern = #"\bmin\.?\s*(trxn|txn|transaction|spends?|purchase)\b|\bmax\.?\s*cash\s?back\b|\bget\b.{0,30}\d\s*%.{0,30}\bcash\s?back\b"#
+    /// A message with one of these words reports real money, even if an ad follows it.
+    static let completedMovementPattern = #"\b(debited|spent|sent|paid|withdrawn|credited)\b"#
     /// Checked after credits, so "txn failed, amount reversed" is still read as a reversal.
     static let failedPattern = #"\b(declined|failed|unsuccessful)\b"#
 
@@ -152,6 +156,9 @@ public struct SMSParser: Sendable {
 
         for rule in Self.ignoreRules where RX.matches(rule.pattern, text) {
             return .ignored(reason: rule.reason)
+        }
+        if RX.matches(Self.promoPattern, text), !RX.matches(Self.completedMovementPattern, text) {
+            return .ignored(reason: "promotional offer")
         }
         if RX.matches(Self.cardPaymentReceivedPattern, text), !RX.matches(Self.debitWordsPattern, text) {
             return .ignored(reason: "card payment received (the bank debit SMS is counted)")

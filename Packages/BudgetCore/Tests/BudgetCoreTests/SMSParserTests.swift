@@ -133,6 +133,14 @@ final class SMSParserTests: XCTestCase {
         assertKind("Cashback of Rs 25 credited to your A/c XX1234 for txn paid at SHOP", .cashback, amount: "25")
     }
 
+    func testSBICardCashbackOfferIgnored() {
+        assertIgnored("Get 5% Extra Cashback at Example Outlets with your SBI Credit Card. Min. Trxn.: Rs. 6000; Max. Cashback: Rs. 750 per card a/c. Valid till 5th December'26. T&C")
+    }
+
+    func testCashbackWithOfferTermsIsStillACredit() {
+        assertKind("Cashback of Rs 25 credited to your A/c XX1234. Min. Txn Rs 500 for next offer", .cashback, amount: "25")
+    }
+
     func testCashbackAdInADebitIsStillADebit() {
         assertKind("Rs 500 spent on Debit Card XX1234 at SHOP. Get 5% cashback on your next order", .spend, amount: "500")
     }
