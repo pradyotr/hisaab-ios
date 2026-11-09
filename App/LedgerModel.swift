@@ -34,6 +34,48 @@ final class LedgerModel {
     func setSavingsKeywords(_ words: [String]) { mutate { $0.settings.savingsKeywords = words } }
     func clearLog() { mutate { $0.log.removeAll() } }
 
+    // MARK: Categories
+
+    @discardableResult
+    func createCategory(named name: String) -> SpendCategory? {
+        var created: SpendCategory?
+        mutate { created = $0.addCategory(named: name) }
+        return created
+    }
+
+    @discardableResult
+    func renameCategory(_ id: UUID, to name: String) -> Bool {
+        var renamed = false
+        mutate { renamed = $0.renameCategory(id, to: name) }
+        return renamed
+    }
+
+    func deleteCategory(_ id: UUID) { mutate { $0.deleteCategory(id) } }
+    func setCategory(_ id: UUID?, for ids: Set<UUID>) { mutate { $0.setCategory(id, for: ids) } }
+
+    /// The "apply to similar spends" prompt to show after `spend` got `category`. Nil if there are no similar spends.
+    func bulkOffer(after spend: Spend, category: SpendCategory) -> BulkCategoryOffer? {
+        let similar = ledger.similarUncategorized(to: spend)
+        guard !similar.isEmpty, let merchant = spend.merchant else { return nil }
+        return BulkCategoryOffer(categoryID: category.id, categoryName: category.name, merchant: merchant,
+                                 ids: Set(similar.map(\.id)))
+    }
+
+    // MARK: Export
+
+    /// Writes all data to a temporary JSON file for the share sheet.
+    func exportFile() throws -> URL {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Hisaab-export-\(formatter.string(from: Date())).json")
+        try encoder.encode(store.load()).write(to: url, options: .atomic)
+        return url
+    }
+
     private func mutate(_ body: (inout Ledger) -> Void) {
         do {
             ledger = try store.update(body)

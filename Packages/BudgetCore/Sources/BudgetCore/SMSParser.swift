@@ -59,6 +59,13 @@ extension SMSRule {
         //     amount: #"spent\s+(?:rs\.?|inr|₹)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)"#,
         //     merchant: #"\bat\s+(.+?)\s+on\b"#
         // ),
+        // UPI bill payment: the biller is the first words of the message, with no "at" or "to".
+        SMSRule(
+            id: "upi-bill-paid",
+            mustMatch: #"\bbill of (?:rs\.?|inr|₹)\s*[0-9].*\bpaid for\b"#,
+            amount: SMSParser.currencyAmountPattern,
+            merchant: #"^(.{2,40}?)\s+bill of\b"#
+        ),
     ]
 
     /// Fallback that handles most Indian bank / UPI debit SMS formats.

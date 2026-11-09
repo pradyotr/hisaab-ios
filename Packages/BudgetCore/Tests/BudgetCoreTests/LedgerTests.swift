@@ -80,11 +80,15 @@ final class LedgerTests: XCTestCase {
         XCTAssertTrue(issuerFirst.add(try smsEntry(issuer, at: now)))
         XCTAssertFalse(issuerFirst.add(try smsEntry(npci, at: now.addingTimeInterval(1))))
         XCTAssertEqual(issuerFirst.transactions.count, 1)
+        XCTAssertEqual(issuerFirst.transactions[0].merchant, "BSNL Mobile Postpaid")
+        XCTAssertEqual(issuerFirst.transactions[0].ref, "123456789012")
 
         var npciFirst = Ledger()
         XCTAssertTrue(npciFirst.add(try smsEntry(npci, at: now)))
         XCTAssertFalse(npciFirst.add(try smsEntry(issuer, at: now.addingTimeInterval(1))))
         XCTAssertEqual(npciFirst.transactions.count, 1)
+        XCTAssertEqual(npciFirst.transactions[0].merchant, "BSNL Mobile Postpaid")
+        XCTAssertEqual(npciFirst.transactions[0].card, "1234")
     }
 
     func testSameAmountOutsideTheWindowIsNotADuplicate() {

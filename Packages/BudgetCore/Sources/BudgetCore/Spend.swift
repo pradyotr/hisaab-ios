@@ -63,6 +63,10 @@ public struct Spend: Codable, Equatable, Identifiable, Sendable {
     /// Kept in the list, but counts 0 (for example a transfer to your own account).
     /// Still takes part in card bill matching, because the money really moved on the card.
     public var excluded: Bool
+    /// The user's category (see `Ledger.categories`). Nil = uncategorized.
+    public var categoryID: UUID?
+    /// Who decided each field. Only `.user` values will train predictions.
+    public var sources: FieldSources
 
     public init(
         id: UUID = UUID(),
@@ -77,7 +81,9 @@ public struct Spend: Codable, Equatable, Identifiable, Sendable {
         card: String? = nil,
         ref: String? = nil,
         reverses: UUID? = nil,
-        excluded: Bool = false
+        excluded: Bool = false,
+        categoryID: UUID? = nil,
+        sources: FieldSources = FieldSources()
     ) {
         self.id = id
         self.amount = amount
@@ -92,11 +98,13 @@ public struct Spend: Codable, Equatable, Identifiable, Sendable {
         self.ref = ref
         self.reverses = reverses
         self.excluded = excluded
+        self.categoryID = categoryID
+        self.sources = sources
     }
 
     // Amount is stored as a string ("249.99") because JSON numbers can lose Decimal precision.
     private enum CodingKeys: String, CodingKey {
-        case id, amount, date, merchant, note, source, rawText, kind, account, card, ref, reverses, excluded
+        case id, amount, date, merchant, note, source, rawText, kind, account, card, ref, reverses, excluded, categoryID, sources
     }
 
     public init(from decoder: Decoder) throws {
@@ -119,6 +127,8 @@ public struct Spend: Codable, Equatable, Identifiable, Sendable {
         ref = try c.decodeIfPresent(String.self, forKey: .ref)
         reverses = try? c.decodeIfPresent(UUID.self, forKey: .reverses)
         excluded = (try? c.decodeIfPresent(Bool.self, forKey: .excluded)) ?? false
+        categoryID = try? c.decodeIfPresent(UUID.self, forKey: .categoryID)
+        sources = (try? c.decodeIfPresent(FieldSources.self, forKey: .sources)) ?? FieldSources()
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -136,5 +146,7 @@ public struct Spend: Codable, Equatable, Identifiable, Sendable {
         try c.encodeIfPresent(ref, forKey: .ref)
         try c.encodeIfPresent(reverses, forKey: .reverses)
         if excluded { try c.encode(excluded, forKey: .excluded) }
+        try c.encodeIfPresent(categoryID, forKey: .categoryID)
+        if sources != FieldSources() { try c.encode(sources, forKey: .sources) }
     }
 }

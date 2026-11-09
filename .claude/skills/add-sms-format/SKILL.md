@@ -38,4 +38,4 @@ All patterns are case-insensitive `NSRegularExpression` strings written as raw s
 ## Notes
 
 - The Shortcuts automation decides *which* messages reach the app (sender or "contains" filter). If a spend never shows up in the in-app **Debug log**, the automation didn't fire. That isn't a parser bug. Ask the user to check the automation's trigger and that "Run Immediately" is set.
-- Duplicate protection: the same SMS text within 10 minutes is skipped (`Ledger.add`).
+- Duplicate protection (`Ledger.add`): skips the same SMS text within 10 minutes, the same reference, direction and amount, or another SMS with the same amount and direction within 2 minutes that names no different reference or card. A skipped SMS still fills in details the kept entry is missing.

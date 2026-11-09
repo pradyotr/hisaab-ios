@@ -6,12 +6,15 @@ struct SettingsView: View {
     @AppStorage(AppearanceMode.storageKey) private var appearance: AppearanceMode = .system
     @State private var newCard = ""
     @State private var newSavingsWord = ""
+    @State private var export: ExportFile?
+    @State private var exportError: String?
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
                     NavigationLink("Budget") { SetupView() }
+                    NavigationLink("Categories") { ManageCategoriesView() }
                 }
 
                 Section {
@@ -93,6 +96,25 @@ struct SettingsView: View {
                     Text("Debits to these count as savings, not spends. Already detected: Groww, Zerodha, Upstox, Kuvera, Paytm Money, Angel One, INDmoney, ET Money, smallcase, ICCL, NSE Clearing, BSE, mutual funds, SIP, CAMS, KFintech, NPS. Applies to new SMS only.")
                 }
 
+                Section {
+                    Button("Export data") {
+                        do {
+                            export = ExportFile(url: try model.exportFile())
+                        } catch {
+                            exportError = error.localizedDescription
+                        }
+                    }
+                    if let exportError {
+                        Text(exportError)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                } header: {
+                    Text("Backup")
+                } footer: {
+                    Text("Saves everything as one JSON file. It includes your spends and the original bank SMS, so keep it private.")
+                }
+
                 Section("Diagnostics") {
                     LabeledContent("Shared storage") {
                         Text(AppGroup.isShared ? "OK" : "NOT SHARED")
@@ -105,6 +127,22 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .sheet(item: $export) { ShareSheet(url: $0.url) }
         }
     }
+}
+
+private struct ExportFile: Identifiable {
+    let url: URL
+    var id: URL { url }
+}
+
+private struct ShareSheet: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

@@ -61,7 +61,8 @@ Widget/                      WidgetKit widgets: lock screen (accessoryRectangula
 
 - Past cycles are summarised with the *current* config. To fix: store config history.
 - Parser = ignore rules + `SMSRule.bankRules` + `SMSRule.generic`. Add bank-specific rules from real (anonymised) samples with the `add-sms-format` skill.
-- No categories, no iCloud backup. App icon is a placeholder (App/Assets.xcassets/AppIcon.appiconset/AppIcon.png, 1024x1024 RGB, no transparency).
+- Categories are user-created (`SpendCategory`, not `Category`, which clashes with an Objective-C type). `Spend.sources` records who decided each field; only `.user` values may train predictions. Category prediction is not built yet.
+- No iCloud backup (Settings has a JSON export). App icon is a placeholder (App/Assets.xcassets/AppIcon.appiconset/AppIcon.png, 1024x1024 RGB, no transparency).
 - After paying for the developer account: TestFlight/1-year signing, and Xcode on a Mac or a cloud Mac for real debugging.
 
 ## Skills

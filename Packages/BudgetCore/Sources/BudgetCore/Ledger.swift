@@ -45,7 +45,8 @@ public struct Ledger: Codable, Equatable, Sendable {
     public static let maxLogEntries = 200
     /// Bump when the stored shape changes, and add the upgrade step in `migrate()`.
     /// 0 = files written before versioning (spends only). 1 = entries with kind / account / ref / reverses / excluded.
-    public static let currentSchemaVersion = 1
+    /// 2 = user categories, and per-field sources on entries.
+    public static let currentSchemaVersion = 2
     /// A reversal is linked automatically to a matching debit from at most this long before it.
     public static let reversalWindow: TimeInterval = 7 * 86_400
     /// Two different SMS with the same amount and direction this close together are one payment,
@@ -59,13 +60,17 @@ public struct Ledger: Codable, Equatable, Sendable {
     public var settings: AppSettings
     /// Newest first. Debug log for the parser and storage, shown in Settings > Debug log.
     public var log: [LogEntry]
+    /// Created by the user. There are no default categories.
+    public var categories: [SpendCategory]
 
-    public init(config: BudgetConfig? = nil, transactions: [Spend] = [], settings: AppSettings = AppSettings(), log: [LogEntry] = []) {
+    public init(config: BudgetConfig? = nil, transactions: [Spend] = [], settings: AppSettings = AppSettings(),
+                log: [LogEntry] = [], categories: [SpendCategory] = []) {
         self.schemaVersion = Self.currentSchemaVersion
         self.config = config
         self.transactions = transactions
         self.settings = settings
         self.log = log
+        self.categories = categories
     }
 
     // Tolerant decoding: new fields must not make old files unreadable.
@@ -76,6 +81,7 @@ public struct Ledger: Codable, Equatable, Sendable {
         transactions = try c.decodeIfPresent([Spend].self, forKey: .transactions) ?? []
         settings = try c.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings()
         log = try c.decodeIfPresent([LogEntry].self, forKey: .log) ?? []
+        categories = try c.decodeIfPresent([SpendCategory].self, forKey: .categories) ?? []
         migrate()
     }
 
@@ -85,16 +91,24 @@ public struct Ledger: Codable, Equatable, Sendable {
             // Version 0 stored debits only. `Spend`'s decoder already defaults them to kind .spend, account .bank.
             schemaVersion = 1
         }
+        if schemaVersion < 2 {
+            // Version 1 had no categories or sources. The decoders already default them to empty.
+            schemaVersion = 2
+        }
     }
 
     /// Adds an entry. Returns false if it is a duplicate SMS:
     /// the same text within `dedupeWindow` seconds, the same reference number, direction and amount
     /// (the bank and the UPI app often both send an SMS for one payment), or another SMS with the same
     /// amount and direction within `duplicateSMSWindow` that names no different reference or card.
+    /// A duplicate still fills in details the kept entry is missing (see `mergeDuplicate`).
     /// A reversal with no link is linked to its matching debit, if one is found and `linkReversal` is true.
     @discardableResult
     public mutating func add(_ transaction: Spend, dedupeWindow: TimeInterval = 600, linkReversal: Bool = true) -> Bool {
-        if transaction.source == .sms, isDuplicate(transaction, dedupeWindow: dedupeWindow) { return false }
+        if transaction.source == .sms, let index = duplicateIndex(of: transaction, dedupeWindow: dedupeWindow) {
+            mergeDuplicate(transaction, into: index)
+            return false
+        }
         var entry = transaction
         if linkReversal, entry.kind == .reversal, entry.reverses == nil {
             entry.reverses = reversalTarget(for: entry)
@@ -104,9 +118,19 @@ public struct Ledger: Codable, Equatable, Sendable {
         return true
     }
 
+    /// Saves an edit made by the user. Every field that changed is recorded as the user's decision.
     public mutating func update(_ transaction: Spend) {
         guard let index = transactions.firstIndex(where: { $0.id == transaction.id }) else { return }
-        transactions[index] = transaction
+        let old = transactions[index]
+        var entry = transaction
+        if old.kind != entry.kind { entry.sources.kind = .user }
+        // Changing the type can reset the account (a card bill is always "bank"). That is not a user decision.
+        if old.account != entry.account, old.kind == entry.kind { entry.sources.account = .user }
+        if old.excluded != entry.excluded { entry.sources.excluded = .user }
+        if old.merchant != entry.merchant { entry.sources.merchant = .user }
+        if old.amount != entry.amount { entry.sources.amount = .user }
+        if old.categoryID != entry.categoryID { entry.sources.category = entry.categoryID == nil ? nil : .user }
+        transactions[index] = entry
         transactions.sort { $0.date > $1.date }
     }
 
@@ -144,8 +168,28 @@ public struct Ledger: Codable, Equatable, Sendable {
             .id
     }
 
-    private func isDuplicate(_ entry: Spend, dedupeWindow: TimeInterval) -> Bool {
-        transactions.contains { other in
+    /// Payment gateways and banks that an SMS can name instead of the real recipient.
+    private static let intermediaryMerchantPattern = #"bank$|\b(razorpay|payu|billdesk|cashfree|ccavenue|bharatpe|npci)\b"#
+
+    /// Keeps the first entry, but takes what the second SMS knows and the first did not.
+    /// Never replaces a value the user set.
+    private mutating func mergeDuplicate(_ duplicate: Spend, into index: Int) {
+        var kept = transactions[index]
+        if kept.ref == nil { kept.ref = duplicate.ref }
+        if kept.card == nil { kept.card = duplicate.card }
+        if kept.account == .bank, duplicate.account == .creditCard, kept.sources.account != .user {
+            kept.account = .creditCard
+        }
+        func isIntermediary(_ name: String) -> Bool { RX.matches(Self.intermediaryMerchantPattern, name) }
+        if kept.sources.merchant != .user, let incoming = duplicate.merchant, !isIntermediary(incoming),
+           kept.merchant.map(isIntermediary) ?? true {
+            kept.merchant = incoming
+        }
+        transactions[index] = kept
+    }
+
+    private func duplicateIndex(of entry: Spend, dedupeWindow: TimeInterval) -> Int? {
+        transactions.firstIndex { other in
             if let raw = entry.rawText, other.rawText == raw,
                abs(other.date.timeIntervalSince(entry.date)) < dedupeWindow {
                 return true

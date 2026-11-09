@@ -6,6 +6,8 @@ struct TransactionsView: View {
     @Environment(LedgerModel.self) private var model
     @State private var editing: Spend?
     @State private var adding = false
+    @State private var categorizing: Spend?
+    @State private var offer: BulkCategoryOffer?
 
     private var currencyCode: String { model.config?.currencyCode ?? "INR" }
 
@@ -13,14 +15,19 @@ struct TransactionsView: View {
         let entries = model.ledger.transactions
         let counted = Counting.countedAmounts(entries)
         let byID = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let names = Dictionary(model.ledger.categories.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        let uncategorized = model.ledger.entriesNeedingCategory.count
         NavigationStack {
             List {
                 ForEach(entries) { spend in
-                    Button { editing = spend } label: {
-                        TransactionRow(spend: spend, counted: counted[spend.id],
-                                       original: spend.reverses.flatMap { byID[$0] }, currencyCode: currencyCode)
-                    }
-                    .tint(.primary)
+                    // Not a Button: a row Button would swallow taps on the category chip inside it.
+                    TransactionRow(spend: spend, counted: counted[spend.id],
+                                   original: spend.reverses.flatMap { byID[$0] }, currencyCode: currencyCode,
+                                   categoryName: spend.categoryID.flatMap { names[$0] },
+                                   onTapCategory: categoryAction(for: spend, counted: counted[spend.id]))
+                    .contentShape(Rectangle())
+                    .onTapGesture { editing = spend }
+                    .accessibilityAddTraits(.isButton)
                     .contextMenu { quickActions(for: spend) }
                 }
                 .onDelete { offsets in
@@ -36,11 +43,31 @@ struct TransactionsView: View {
             }
             .navigationTitle("Spends")
             .toolbar {
-                Button { adding = true } label: { Image(systemName: "plus") }
+                if uncategorized > 0 {
+                    ToolbarItem(placement: .topBarLeading) {
+                        NavigationLink("Categorize (\(uncategorized))") { CategorizeFlowView() }
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button { adding = true } label: { Image(systemName: "plus") }
+                }
             }
+            .safeAreaInset(edge: .bottom) { BulkCategoryBanner(offer: $offer) }
             .sheet(isPresented: $adding) { TransactionEditor(spend: nil) }
             .sheet(item: $editing) { TransactionEditor(spend: $0) }
+            .sheet(item: $categorizing) { spend in
+                CategoryPickerSheet(currentID: spend.categoryID) { chosen in
+                    model.setCategory(chosen?.id, for: [spend.id])
+                    offer = chosen.flatMap { model.bulkOffer(after: spend, category: $0) }
+                }
+            }
         }
+    }
+
+    /// Entries that count 0 (savings, money in, covered card bills) don't need a category.
+    private func categoryAction(for spend: Spend, counted: Decimal?) -> (() -> Void)? {
+        guard (counted ?? 0) != 0 || spend.categoryID != nil else { return nil }
+        return { categorizing = spend }
     }
 
     /// Long-press menu to fix the type without opening the editor.
@@ -138,6 +165,9 @@ struct TransactionRow: View {
     /// For a linked reversal: the entry it cancels.
     let original: Spend?
     let currencyCode: String
+    var categoryName: String? = nil
+    /// Nil hides the category chip.
+    var onTapCategory: (() -> Void)? = nil
 
     var body: some View {
         HStack {
@@ -153,6 +183,10 @@ struct TransactionRow: View {
                     Text(detail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+                if let onTapCategory {
+                    CategoryChip(name: categoryName, action: onTapCategory)
+                        .padding(.top, 2)
                 }
             }
             Spacer()
@@ -223,6 +257,12 @@ struct TransactionEditor: View {
     @State private var cardText = ""
     @State private var reverses: UUID?
     @State private var excluded = false
+    @State private var categoryID: UUID?
+    @State private var choosingCategory = false
+
+    private var categoryName: String {
+        model.ledger.categories.first { $0.id == categoryID }?.name ?? "None"
+    }
 
     var body: some View {
         NavigationStack {
@@ -232,6 +272,10 @@ struct TransactionEditor: View {
                 TextField(kind.isCredit ? "From" : "Merchant", text: $merchant)
                 TextField("Note", text: $note)
                 DatePicker("When", selection: $date)
+                Button { choosingCategory = true } label: {
+                    LabeledContent("Category", value: categoryName)
+                }
+                .tint(.primary)
 
                 Section {
                     Picker("Type", selection: $kind) {
@@ -284,6 +328,9 @@ struct TransactionEditor: View {
                 }
             }
             .onAppear(perform: load)
+            .sheet(isPresented: $choosingCategory) {
+                CategoryPickerSheet(currentID: categoryID) { categoryID = $0?.id }
+            }
             .onChange(of: kind) { _, newKind in
                 if newKind == .reversal, reverses == nil {
                     reverses = model.ledger.reversalTarget(for: draft())
@@ -323,6 +370,7 @@ struct TransactionEditor: View {
         cardText = spend.card ?? ""
         reverses = spend.reverses
         excluded = spend.excluded
+        categoryID = spend.categoryID
     }
 
     /// The entry as currently entered (id kept when editing).
@@ -341,6 +389,9 @@ struct TransactionEditor: View {
         entry.card = showsCard ? Counting.normalizedCard(cardText) : nil
         entry.reverses = kind == .reversal ? reverses : nil
         entry.excluded = excluded
+        entry.categoryID = categoryID
+        // A new entry has no earlier version for `Ledger.update` to compare with.
+        if spend == nil { entry.sources.category = categoryID == nil ? nil : .user }
         return entry
     }
 

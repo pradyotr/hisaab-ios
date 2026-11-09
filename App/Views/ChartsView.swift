@@ -13,6 +13,7 @@ struct ChartsView: View {
     enum Scope: String, CaseIterable, Identifiable {
         case daily = "Daily"
         case monthly = "Monthly"
+        case categories = "Categories"
         var id: Self { self }
     }
 
@@ -30,6 +31,7 @@ struct ChartsView: View {
                     switch scope {
                     case .daily: dailyChart(engine)
                     case .monthly: monthlyChart(engine)
+                    case .categories: CategoryBreakdownView(engine: engine)
                     }
                 }
                 Spacer()
