@@ -59,11 +59,23 @@ extension Spend {
     }
 
     /// The merchant in a form that is the same across SMS: "Swiggy", "SWIGGY" and "swiggy@ybl" give "swiggy".
+    /// Company suffixes are dropped, so "ZOMATOLIMITED" and "Zomato Ltd" give "zomato".
     public var merchantKey: String? {
         guard let merchant else { return nil }
         let name = merchant.lowercased().split(separator: "@").first.map(String.init) ?? ""
         let words = name.split { !($0.isLetter || $0.isNumber) }
-        return words.isEmpty ? nil : words.joined(separator: " ")
+        guard !words.isEmpty else { return nil }
+        var key = words.joined(separator: " ")
+        var shortened = true
+        while shortened {
+            shortened = false
+            // Banks send names with the spaces removed, so these match at the end of a word too.
+            for suffix in ["limited", "ltd", "pvt", "private", " inc", " llp"] where key.hasSuffix(suffix) && key.count - suffix.count >= 3 {
+                key = String(key.dropLast(suffix.count)).trimmingCharacters(in: .whitespaces)
+                shortened = true
+            }
+        }
+        return key
     }
 }
 
@@ -96,6 +108,10 @@ extension Ledger {
         for index in transactions.indices where transactions[index].categoryID == id {
             transactions[index].categoryID = nil
             transactions[index].sources.category = nil
+        }
+        for index in transactions.indices {
+            transactions[index].prediction?.candidates.removeAll { $0.categoryID == id }
+            if transactions[index].prediction?.candidates.isEmpty == true { transactions[index].prediction = nil }
         }
     }
 

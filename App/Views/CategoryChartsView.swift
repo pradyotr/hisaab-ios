@@ -43,6 +43,8 @@ struct CategoryBreakdownView: View {
                 }
             }
         }
+        // The scroll bar would otherwise sit on top of the amounts at the right edge.
+        .scrollIndicators(.hidden)
     }
 
     private func title(_ total: CategoryTotal, _ names: [UUID: String]) -> String {
@@ -77,59 +79,17 @@ func cycleTitle(_ cycle: BudgetCycle) -> String {
     return "\(first) – \(last)"
 }
 
-/// Share of spending per category. Categories with a net refund have no slice, because a pie can't show
-/// a negative share. Each of the first categories created keeps its colour across cycles; later ones are "Other".
+/// Share of spending per category, with a legend.
 private struct CategoryPieChart: View {
     let totals: [CategoryTotal]
     let categories: [SpendCategory]
 
-    private struct Slice: Identifiable {
-        let name: String
-        let amount: Double
-        let color: Color
-        var id: String { name }
-    }
-
-    /// Fixed values checked for colour-blind separation and contrast in light and dark mode.
-    /// The system orange, teal and green are too light for this.
-    private static let palette: [Color] = [
-        Color(red: 0, green: 122 / 255, blue: 1),
-        Color(red: 204 / 255, green: 112 / 255, blue: 0),
-        Color(red: 0, green: 149 / 255, blue: 184 / 255),
-        Color(red: 1, green: 45 / 255, blue: 85 / 255),
-        Color(red: 175 / 255, green: 82 / 255, blue: 222 / 255),
-        Color(red: 42 / 255, green: 166 / 255, blue: 72 / 255),
-    ]
-
-    private var slices: [Slice] {
-        let positive = totals.filter { $0.amount > 0 }
-        var result: [Slice] = []
-        var rest = 0.0
-        for total in positive {
-            guard let id = total.categoryID else { continue }
-            if let index = categories.firstIndex(where: { $0.id == id }), index < Self.palette.count {
-                result.append(Slice(name: categories[index].name, amount: total.amount.doubleValue, color: Self.palette[index]))
-            } else {
-                rest += total.amount.doubleValue
-            }
-        }
-        if rest > 0 { result.append(Slice(name: "Other", amount: rest, color: .brown)) }
-        if let loose = positive.first(where: { $0.categoryID == nil }) {
-            result.append(Slice(name: "Uncategorized", amount: loose.amount.doubleValue, color: .gray))
-        }
-        return result
-    }
-
     var body: some View {
-        let slices = self.slices
+        let slices = CategoryPie.slices(totals: totals, categories: categories)
         if !slices.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                Chart(slices) { slice in
-                    SectorMark(angle: .value("Spent", slice.amount), innerRadius: .ratio(0.6), angularInset: 1)
-                        .cornerRadius(3)
-                        .foregroundStyle(slice.color)
-                }
-                .frame(height: 200)
+                CategoryDonut(slices: slices)
+                    .frame(height: 200)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), alignment: .leading)], alignment: .leading, spacing: 6) {
                     ForEach(slices) { slice in
                         HStack(spacing: 6) {

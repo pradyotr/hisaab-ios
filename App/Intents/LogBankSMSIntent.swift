@@ -45,6 +45,12 @@ struct LogBankSMSIntent: AppIntent {
                     if parsed.account == .creditCard { details.append("credit card") }
                     if let card = parsed.card { details.append("card \(card)") }
                     if let ref = parsed.ref { details.append("ref \(ref)") }
+                    if let saved = ledger.transactions.first(where: { $0.id == entry.id }), let guess = saved.prediction {
+                        let top = guess.candidates.first.flatMap { candidate in
+                            ledger.categories.first { $0.id == candidate.categoryID }?.name
+                        } ?? "?"
+                        details.append("\(guess.autoAssign ? "auto" : "suggested"): \(top)")
+                    }
                     if parsed.kind == .reversal {
                         let linked = ledger.transactions.first { $0.id == entry.id }?.reverses != nil
                         details.append(linked ? "linked to original" : "no original found")

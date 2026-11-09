@@ -67,6 +67,8 @@ public struct Spend: Codable, Equatable, Identifiable, Sendable {
     public var categoryID: UUID?
     /// Who decided each field. Only `.user` values will train predictions.
     public var sources: FieldSources
+    /// What the app guessed for the category. Kept even when not assigned, to offer it and to spot corrections.
+    public var prediction: CategoryPrediction?
 
     public init(
         id: UUID = UUID(),
@@ -83,7 +85,8 @@ public struct Spend: Codable, Equatable, Identifiable, Sendable {
         reverses: UUID? = nil,
         excluded: Bool = false,
         categoryID: UUID? = nil,
-        sources: FieldSources = FieldSources()
+        sources: FieldSources = FieldSources(),
+        prediction: CategoryPrediction? = nil
     ) {
         self.id = id
         self.amount = amount
@@ -100,11 +103,12 @@ public struct Spend: Codable, Equatable, Identifiable, Sendable {
         self.excluded = excluded
         self.categoryID = categoryID
         self.sources = sources
+        self.prediction = prediction
     }
 
     // Amount is stored as a string ("249.99") because JSON numbers can lose Decimal precision.
     private enum CodingKeys: String, CodingKey {
-        case id, amount, date, merchant, note, source, rawText, kind, account, card, ref, reverses, excluded, categoryID, sources
+        case id, amount, date, merchant, note, source, rawText, kind, account, card, ref, reverses, excluded, categoryID, sources, prediction
     }
 
     public init(from decoder: Decoder) throws {
@@ -129,6 +133,7 @@ public struct Spend: Codable, Equatable, Identifiable, Sendable {
         excluded = (try? c.decodeIfPresent(Bool.self, forKey: .excluded)) ?? false
         categoryID = try? c.decodeIfPresent(UUID.self, forKey: .categoryID)
         sources = (try? c.decodeIfPresent(FieldSources.self, forKey: .sources)) ?? FieldSources()
+        prediction = try? c.decodeIfPresent(CategoryPrediction.self, forKey: .prediction)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -148,5 +153,6 @@ public struct Spend: Codable, Equatable, Identifiable, Sendable {
         if excluded { try c.encode(excluded, forKey: .excluded) }
         try c.encodeIfPresent(categoryID, forKey: .categoryID)
         if sources != FieldSources() { try c.encode(sources, forKey: .sources) }
+        try c.encodeIfPresent(prediction, forKey: .prediction)
     }
 }

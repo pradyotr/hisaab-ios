@@ -344,5 +344,7 @@ struct HisaabWidgetBundle: WidgetBundle {
         HisaabWidget()
         HisaabCycleWidget()
         HisaabPrivateWidget()
+        HisaabCategoryChartWidget()
+        HisaabCategorizeWidget()
     }
 }

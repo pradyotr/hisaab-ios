@@ -4,13 +4,29 @@ import BudgetCore
 /// Tappable category on a spend row. Shows "Add category" when there is none.
 struct CategoryChip: View {
     let name: String?
+    /// The app assigned `name`, and the user has not confirmed it.
+    var isAuto = false
+    /// Shown as a question when there is no category.
+    var suggestion: String? = nil
     let action: () -> Void
+
+    private var title: String {
+        if let name { return name }
+        if let suggestion { return "\(suggestion)?" }
+        return "Add category"
+    }
 
     var body: some View {
         Button(action: action) {
-            Text(name ?? "Add category")
+            HStack(spacing: 3) {
+                if isAuto {
+                    Image(systemName: "sparkles")
+                        .accessibilityLabel("Auto")
+                }
+                Text(title)
+                    .lineLimit(1)
+            }
                 .font(.caption)
-                .lineLimit(1)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .foregroundStyle(name == nil ? Color.secondary : Color.accentColor)
@@ -31,6 +47,7 @@ struct CategoryPickerSheet: View {
     @Environment(LedgerModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let currentID: UUID?
+    var prediction: CategoryPrediction? = nil
     /// Nil = the category was removed.
     let onSelect: (SpendCategory?) -> Void
 
@@ -38,9 +55,33 @@ struct CategoryPickerSheet: View {
 
     private var trimmed: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
+    private var suggested: [SpendCategory] {
+        guard trimmed.isEmpty else { return [] }
+        return (prediction?.candidates ?? []).compactMap { candidate in
+            model.ledger.categories.first { $0.id == candidate.categoryID }
+        }
+    }
+
     private var matches: [SpendCategory] {
         let all = model.ledger.categoriesByUse
-        return trimmed.isEmpty ? all : all.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
+        let suggestedIDs = Set(suggested.map(\.id))
+        return trimmed.isEmpty
+            ? all.filter { !suggestedIDs.contains($0.id) }
+            : all.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
+    }
+
+    private func row(_ category: SpendCategory) -> some View {
+        Button { choose(category) } label: {
+            HStack {
+                Text(category.name)
+                Spacer()
+                if category.id == currentID {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+        }
+        .tint(.primary)
     }
 
     private var canCreate: Bool {
@@ -63,21 +104,18 @@ struct CategoryPickerSheet: View {
                         Button("Create \"\(trimmed)\"", action: create)
                     }
                 }
+                if !suggested.isEmpty {
+                    Section {
+                        ForEach(suggested) { row($0) }
+                    } header: {
+                        Text("Suggested")
+                    } footer: {
+                        if let reason = prediction?.reason { Text(reason) }
+                    }
+                }
                 if !matches.isEmpty {
                     Section {
-                        ForEach(matches) { category in
-                            Button { choose(category) } label: {
-                                HStack {
-                                    Text(category.name)
-                                    Spacer()
-                                    if category.id == currentID {
-                                        Image(systemName: "checkmark")
-                                            .foregroundStyle(Color.accentColor)
-                                    }
-                                }
-                            }
-                            .tint(.primary)
-                        }
+                        ForEach(matches) { row($0) }
                     }
                 }
                 if currentID != nil {
@@ -248,6 +286,55 @@ struct ManageCategoriesView: View {
 
     private func isPresent(_ item: Binding<SpendCategory?>) -> Binding<Bool> {
         Binding(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } })
+    }
+}
+
+/// How well predictions work on the user's own history, and a way to apply them to older spends.
+struct LearningView: View {
+    @Environment(LedgerModel.self) private var model
+    @State private var replay: CategoryReplayResult?
+    @State private var outcome: String?
+
+    var body: some View {
+        Form {
+            Section {
+                if let replay {
+                    LabeledContent("Spends you labelled", value: "\(replay.labels)")
+                    LabeledContent("Top guess right", value: percent(replay.topCorrect, of: replay.tested))
+                    LabeledContent("Right answer in top 3", value: percent(replay.topThreeCorrect, of: replay.tested))
+                    LabeledContent("Auto-assigned correctly", value: percent(replay.autoCorrect, of: replay.autoAssigned))
+                } else {
+                    ProgressView()
+                }
+            } header: {
+                Text("Category predictions")
+            } footer: {
+                Text("Measured on your own history: each spend you labelled is predicted using only the labels before it. These numbers mean little until you have about 50 labels. Each correction counts extra.")
+            }
+            Section {
+                Button("Predict uncategorized spends") {
+                    let assigned = model.predictUncategorized()
+                    outcome = "\(assigned) assigned. The others keep their suggestions."
+                }
+                if let outcome {
+                    Text(outcome)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } footer: {
+                Text("New spends are predicted when they are logged. Categories you set are never changed.")
+            }
+        }
+        .navigationTitle("Learning")
+        .task(id: model.ledger.transactions.count) {
+            let ledger = model.ledger
+            replay = await Task.detached { ledger.categoryReplay() }.value
+        }
+    }
+
+    private func percent(_ part: Int, of whole: Int) -> String {
+        guard whole > 0 else { return "–" }
+        return "\(Int((Double(part) / Double(whole) * 100).rounded()))% (\(part) of \(whole))"
     }
 }
 

@@ -24,6 +24,7 @@ struct TransactionsView: View {
                     TransactionRow(spend: spend, counted: counted[spend.id],
                                    original: spend.reverses.flatMap { byID[$0] }, currencyCode: currencyCode,
                                    categoryName: spend.categoryID.flatMap { names[$0] },
+                                   suggestionName: spend.prediction?.candidates.first.flatMap { names[$0.categoryID] },
                                    onTapCategory: categoryAction(for: spend, counted: counted[spend.id]))
                     .contentShape(Rectangle())
                     .onTapGesture { editing = spend }
@@ -56,7 +57,8 @@ struct TransactionsView: View {
             .sheet(isPresented: $adding) { TransactionEditor(spend: nil) }
             .sheet(item: $editing) { TransactionEditor(spend: $0) }
             .sheet(item: $categorizing) { spend in
-                CategoryPickerSheet(currentID: spend.categoryID) { chosen in
+                CategoryPickerSheet(currentID: spend.categoryID,
+                                    prediction: spend.prediction ?? model.ledger.categoryPrediction(for: spend)) { chosen in
                     model.setCategory(chosen?.id, for: [spend.id])
                     offer = chosen.flatMap { model.bulkOffer(after: spend, category: $0) }
                 }
@@ -166,6 +168,7 @@ struct TransactionRow: View {
     let original: Spend?
     let currencyCode: String
     var categoryName: String? = nil
+    var suggestionName: String? = nil
     /// Nil hides the category chip.
     var onTapCategory: (() -> Void)? = nil
 
@@ -185,7 +188,8 @@ struct TransactionRow: View {
                         .foregroundStyle(.secondary)
                 }
                 if let onTapCategory {
-                    CategoryChip(name: categoryName, action: onTapCategory)
+                    CategoryChip(name: categoryName, isAuto: spend.sources.category == .learned,
+                                 suggestion: suggestionName, action: onTapCategory)
                         .padding(.top, 2)
                 }
             }
@@ -329,7 +333,7 @@ struct TransactionEditor: View {
             }
             .onAppear(perform: load)
             .sheet(isPresented: $choosingCategory) {
-                CategoryPickerSheet(currentID: categoryID) { categoryID = $0?.id }
+                CategoryPickerSheet(currentID: categoryID, prediction: spend?.prediction) { categoryID = $0?.id }
             }
             .onChange(of: kind) { _, newKind in
                 if newKind == .reversal, reverses == nil {

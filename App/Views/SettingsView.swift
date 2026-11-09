@@ -15,6 +15,7 @@ struct SettingsView: View {
                 Section {
                     NavigationLink("Budget") { SetupView() }
                     NavigationLink("Categories") { ManageCategoriesView() }
+                    NavigationLink("Learning") { LearningView() }
                 }
 
                 Section {

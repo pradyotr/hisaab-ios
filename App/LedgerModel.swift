@@ -61,6 +61,13 @@ final class LedgerModel {
                                  ids: Set(similar.map(\.id)))
     }
 
+    /// Fills in predictions for spends with no category. Returns how many got one assigned.
+    func predictUncategorized() -> Int {
+        var assigned = 0
+        mutate { assigned = $0.predictUncategorized() }
+        return assigned
+    }
+
     // MARK: Export
 
     /// Writes all data to a temporary JSON file for the share sheet.

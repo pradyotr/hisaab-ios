@@ -46,7 +46,8 @@ public struct Ledger: Codable, Equatable, Sendable {
     /// Bump when the stored shape changes, and add the upgrade step in `migrate()`.
     /// 0 = files written before versioning (spends only). 1 = entries with kind / account / ref / reverses / excluded.
     /// 2 = user categories, and per-field sources on entries.
-    public static let currentSchemaVersion = 2
+    /// 3 = the category prediction on entries.
+    public static let currentSchemaVersion = 3
     /// A reversal is linked automatically to a matching debit from at most this long before it.
     public static let reversalWindow: TimeInterval = 7 * 86_400
     /// Two different SMS with the same amount and direction this close together are one payment,
@@ -95,6 +96,10 @@ public struct Ledger: Codable, Equatable, Sendable {
             // Version 1 had no categories or sources. The decoders already default them to empty.
             schemaVersion = 2
         }
+        if schemaVersion < 3 {
+            // Version 2 had no predictions. The decoder already defaults them to nil.
+            schemaVersion = 3
+        }
     }
 
     /// Adds an entry. Returns false if it is a duplicate SMS:
@@ -104,9 +109,13 @@ public struct Ledger: Codable, Equatable, Sendable {
     /// A duplicate still fills in details the kept entry is missing (see `mergeDuplicate`).
     /// A reversal with no link is linked to its matching debit, if one is found and `linkReversal` is true.
     @discardableResult
-    public mutating func add(_ transaction: Spend, dedupeWindow: TimeInterval = 600, linkReversal: Bool = true) -> Bool {
+    public mutating func add(_ transaction: Spend, dedupeWindow: TimeInterval = 600, linkReversal: Bool = true,
+                             calendar: Calendar = .current) -> Bool {
         if transaction.source == .sms, let index = duplicateIndex(of: transaction, dedupeWindow: dedupeWindow) {
+            let merchant = transactions[index].merchant
             mergeDuplicate(transaction, into: index)
+            // A better recipient name is better evidence for the category.
+            if transactions[index].merchant != merchant { predictCategory(at: index, calendar: calendar) }
             return false
         }
         var entry = transaction
@@ -115,6 +124,9 @@ public struct Ledger: Codable, Equatable, Sendable {
         }
         transactions.append(entry)
         transactions.sort { $0.date > $1.date }
+        if entry.categoryID == nil, let index = transactions.firstIndex(where: { $0.id == entry.id }) {
+            predictCategory(at: index, calendar: calendar)
+        }
         return true
     }
 

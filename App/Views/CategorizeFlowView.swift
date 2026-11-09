@@ -80,9 +80,19 @@ struct CategorizeFlowView: View {
     }
 
     private func categories(for spend: Spend) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let prediction = model.ledger.categoryPrediction(for: spend)
+        let suggestedIDs = (prediction?.candidates ?? []).map(\.categoryID)
+        let all = model.ledger.categoriesByUse
+        let suggested = suggestedIDs.compactMap { id in all.first { $0.id == id } }
+        let ordered = suggested + all.filter { !suggestedIDs.contains($0.id) }
+        return VStack(alignment: .leading, spacing: 12) {
+            if let reason = prediction?.reason {
+                SwiftUI.Label("Suggested first: \(reason)", systemImage: "sparkles")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 8)], spacing: 8) {
-                ForEach(model.ledger.categoriesByUse) { category in
+                ForEach(ordered) { category in
                     Button { assign(category, to: spend) } label: {
                         Text(category.name)
                             .font(.subheadline)
