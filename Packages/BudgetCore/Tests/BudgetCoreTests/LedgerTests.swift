@@ -63,6 +63,64 @@ final class LedgerTests: XCTestCase {
         XCTAssertEqual(ledger.transactions.count, 2)
     }
 
+    // MARK: Duplicates from two senders, close in time
+
+    private func smsEntry(_ text: String, at date: Date) throws -> Spend {
+        let parsed = try XCTUnwrap(SMSParser().parse(text).parsed, "Not parsed: \(text)")
+        return Spend(amount: parsed.amount, date: date, merchant: parsed.merchant, source: .sms, rawText: text,
+                     kind: parsed.kind, account: parsed.account, card: parsed.card, ref: parsed.ref)
+    }
+
+    func testCardIssuerAndNPCISMSForOnePaymentAreOneEntry() throws {
+        let issuer = "Rs.177.00 spent on your SBI Credit Card ending with 1234 at AxisBank on 07-11-26 via UPI (Ref No. 123456789012). Trxn. not done by you? Report at https://example.com/Dispute"
+        let npci = "BSNL Mobile Postpaid bill of INR 177.00 paid for Mobile Number- 9000000000 from your SBI RUPAY CREDIT CARD account (XXXX34) using BHIM. Refer txn history for further details. For faster payments, access your billers from My Bills section. - NPCI"
+        let now = Date()
+
+        var issuerFirst = Ledger()
+        XCTAssertTrue(issuerFirst.add(try smsEntry(issuer, at: now)))
+        XCTAssertFalse(issuerFirst.add(try smsEntry(npci, at: now.addingTimeInterval(1))))
+        XCTAssertEqual(issuerFirst.transactions.count, 1)
+
+        var npciFirst = Ledger()
+        XCTAssertTrue(npciFirst.add(try smsEntry(npci, at: now)))
+        XCTAssertFalse(npciFirst.add(try smsEntry(issuer, at: now.addingTimeInterval(1))))
+        XCTAssertEqual(npciFirst.transactions.count, 1)
+    }
+
+    func testSameAmountOutsideTheWindowIsNotADuplicate() {
+        var ledger = Ledger()
+        let now = Date()
+        XCTAssertTrue(ledger.add(Spend(amount: 177, date: now, source: .sms, rawText: "first text")))
+        XCTAssertTrue(ledger.add(Spend(amount: 177, date: now.addingTimeInterval(Ledger.duplicateSMSWindow + 1),
+                                       source: .sms, rawText: "second text")))
+    }
+
+    func testDifferentReferenceOrCardIsNotADuplicate() {
+        let now = Date()
+        var byRef = Ledger()
+        XCTAssertTrue(byRef.add(Spend(amount: 20, date: now, source: .sms, rawText: "first", ref: "111111111111")))
+        XCTAssertTrue(byRef.add(Spend(amount: 20, date: now.addingTimeInterval(5), source: .sms, rawText: "second", ref: "222222222222")))
+
+        var byCard = Ledger()
+        XCTAssertTrue(byCard.add(Spend(amount: 20, date: now, source: .sms, rawText: "first", card: "1234")))
+        XCTAssertTrue(byCard.add(Spend(amount: 20, date: now.addingTimeInterval(5), source: .sms, rawText: "second", card: "5678")))
+    }
+
+    func testDifferentAmountOrDirectionIsNotADuplicate() {
+        let now = Date()
+        var ledger = Ledger()
+        XCTAssertTrue(ledger.add(Spend(amount: 20, date: now, source: .sms, rawText: "first")))
+        XCTAssertTrue(ledger.add(Spend(amount: 21, date: now.addingTimeInterval(1), source: .sms, rawText: "second")))
+        XCTAssertTrue(ledger.add(Spend(amount: 20, date: now.addingTimeInterval(2), source: .sms, rawText: "third", kind: .refund)))
+    }
+
+    func testManualEntryDoesNotHideACloseSMS() {
+        let now = Date()
+        var ledger = Ledger()
+        XCTAssertTrue(ledger.add(Spend(amount: 20, date: now)))
+        XCTAssertTrue(ledger.add(Spend(amount: 20, date: now.addingTimeInterval(1), source: .sms, rawText: "text")))
+    }
+
     // MARK: Reversal linking
 
     func testReversalLinksByReference() {

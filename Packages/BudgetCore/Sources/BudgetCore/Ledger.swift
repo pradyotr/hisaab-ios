@@ -48,6 +48,9 @@ public struct Ledger: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 1
     /// A reversal is linked automatically to a matching debit from at most this long before it.
     public static let reversalWindow: TimeInterval = 7 * 86_400
+    /// Two different SMS with the same amount and direction this close together are one payment,
+    /// unless they name different reference numbers or cards.
+    public static let duplicateSMSWindow: TimeInterval = 120
 
     public var schemaVersion: Int
     public var config: BudgetConfig?
@@ -85,8 +88,9 @@ public struct Ledger: Codable, Equatable, Sendable {
     }
 
     /// Adds an entry. Returns false if it is a duplicate SMS:
-    /// the same text within `dedupeWindow` seconds, or the same reference number, direction and amount
-    /// (the bank and the UPI app often both send an SMS for one payment).
+    /// the same text within `dedupeWindow` seconds, the same reference number, direction and amount
+    /// (the bank and the UPI app often both send an SMS for one payment), or another SMS with the same
+    /// amount and direction within `duplicateSMSWindow` that names no different reference or card.
     /// A reversal with no link is linked to its matching debit, if one is found and `linkReversal` is true.
     @discardableResult
     public mutating func add(_ transaction: Spend, dedupeWindow: TimeInterval = 600, linkReversal: Bool = true) -> Bool {
@@ -150,8 +154,19 @@ public struct Ledger: Codable, Equatable, Sendable {
                other.kind.isCredit == entry.kind.isCredit, other.amount == entry.amount {
                 return true
             }
-            return false
+            return isSamePaymentFromAnotherSender(entry, other)
         }
+    }
+
+    /// Two different SMS for one payment (card issuer + NPCI, bank + UPI app). Often only one has a reference
+    /// or card number and the merchant names differ, so only a real conflict in those fields rules it out.
+    private func isSamePaymentFromAnotherSender(_ entry: Spend, _ other: Spend) -> Bool {
+        guard other.source == .sms, other.amount == entry.amount,
+              other.kind.isCredit == entry.kind.isCredit,
+              abs(other.date.timeIntervalSince(entry.date)) <= Self.duplicateSMSWindow else { return false }
+        if let a = entry.ref, let b = other.ref, a != b { return false }
+        if let a = Counting.normalizedCard(entry.card), let b = Counting.normalizedCard(other.card), a != b { return false }
+        return true
     }
 
     public mutating func appendLog(_ message: String, rawText: String? = nil, at date: Date = Date()) {
