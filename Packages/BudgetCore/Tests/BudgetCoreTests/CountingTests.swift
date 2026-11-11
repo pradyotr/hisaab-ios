@@ -21,7 +21,7 @@ final class CountingTests: XCTestCase {
     }
 
     private func bill(_ amount: Decimal, _ d: Date, card: String? = nil) -> Spend {
-        Spend(amount: amount, date: d, kind: .cardBill, card: card)
+        Spend(amount: amount, date: d, kind: .spend, card: card, categoryID: SpendCategory.creditCardBillID)
     }
 
     // MARK: Basic kinds

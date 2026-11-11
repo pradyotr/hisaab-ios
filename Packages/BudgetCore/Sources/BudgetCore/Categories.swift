@@ -9,6 +9,16 @@ public struct SpendCategory: Codable, Equatable, Identifiable, Sendable {
         self.id = id
         self.name = name
     }
+
+    /// The built-in category for credit card bill payments. Fixed id, so `Counting` can recognise a bill
+    /// from the entry alone. It can be renamed, but not deleted.
+    public static let creditCardBillID = UUID(uuidString: "00000000-0000-0000-0000-0000000CCB11")!
+    public static let creditCardBill = SpendCategory(id: creditCardBillID, name: "Credit Card Bill")
+
+    /// Categories every ledger has.
+    public static let builtIn: [SpendCategory] = [creditCardBill]
+
+    public var isBuiltIn: Bool { Self.builtIn.contains { $0.id == id } }
 }
 
 /// Who decided the value of a field.
@@ -102,8 +112,9 @@ extension Ledger {
         return true
     }
 
-    /// Deletes a category. Its entries become uncategorized.
+    /// Deletes a category. Its entries become uncategorized. Built-in categories can't be deleted.
     public mutating func deleteCategory(_ id: UUID) {
+        guard !SpendCategory.builtIn.contains(where: { $0.id == id }) else { return }
         categories.removeAll { $0.id == id }
         for index in transactions.indices where transactions[index].categoryID == id {
             transactions[index].categoryID = nil
@@ -156,6 +167,21 @@ extension Ledger {
             if keyA != keyB { return keyA < keyB }
             return a.date > b.date
         }
+    }
+
+    /// What the Categorize widget shows: entries that need a category, and entries whose category was
+    /// assigned automatically (learned or by a rule), so a wrong guess can be corrected.
+    /// Choosing a category, even the assigned one, makes it the user's and takes the entry off the queue.
+    /// Newest first.
+    public var reviewQueue: [Spend] {
+        let needing = Set(entriesNeedingCategory.map(\.id))
+        return transactions
+            .filter { entry in
+                if needing.contains(entry.id) { return true }
+                guard entry.categoryID != nil, let source = entry.sources.category else { return false }
+                return source == .learned || source == .rule
+            }
+            .sorted { $0.date > $1.date }
     }
 
     /// Other entries from the same merchant that still need a category.

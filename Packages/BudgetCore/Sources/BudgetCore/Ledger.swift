@@ -47,7 +47,8 @@ public struct Ledger: Codable, Equatable, Sendable {
     /// 0 = files written before versioning (spends only). 1 = entries with kind / account / ref / reverses / excluded.
     /// 2 = user categories, and per-field sources on entries.
     /// 3 = the category prediction on entries.
-    public static let currentSchemaVersion = 3
+    /// 4 = no "cardBill" kind: a card bill is a spend in the built-in "Credit Card Bill" category.
+    public static let currentSchemaVersion = 4
     /// A reversal is linked automatically to a matching debit from at most this long before it.
     public static let reversalWindow: TimeInterval = 7 * 86_400
     /// Two different SMS with the same amount and direction this close together are one payment,
@@ -61,7 +62,7 @@ public struct Ledger: Codable, Equatable, Sendable {
     public var settings: AppSettings
     /// Newest first. Debug log for the parser and storage, shown in Settings > Debug log.
     public var log: [LogEntry]
-    /// Created by the user. There are no default categories.
+    /// Created by the user, plus the built-in ones (`SpendCategory.builtIn`), which are always present.
     public var categories: [SpendCategory]
 
     public init(config: BudgetConfig? = nil, transactions: [Spend] = [], settings: AppSettings = AppSettings(),
@@ -72,6 +73,29 @@ public struct Ledger: Codable, Equatable, Sendable {
         self.settings = settings
         self.log = log
         self.categories = categories
+        addBuiltInCategories()
+    }
+
+    /// Adds any built-in category that is missing. A user category with the same name becomes the built-in one.
+    private mutating func addBuiltInCategories() {
+        for builtIn in SpendCategory.builtIn where !categories.contains(where: { $0.id == builtIn.id }) {
+            guard let index = categories.firstIndex(where: { $0.name.caseInsensitiveCompare(builtIn.name) == .orderedSame }) else {
+                categories.append(builtIn)
+                continue
+            }
+            let oldID = categories[index].id
+            categories[index].id = builtIn.id
+            for i in transactions.indices {
+                if transactions[i].categoryID == oldID { transactions[i].categoryID = builtIn.id }
+                if var prediction = transactions[i].prediction {
+                    prediction.candidates = prediction.candidates.map { candidate in
+                        candidate.categoryID == oldID
+                            ? CategoryCandidate(categoryID: builtIn.id, confidence: candidate.confidence) : candidate
+                    }
+                    transactions[i].prediction = prediction
+                }
+            }
+        }
     }
 
     // Tolerant decoding: new fields must not make old files unreadable.
@@ -100,6 +124,13 @@ public struct Ledger: Codable, Equatable, Sendable {
             // Version 2 had no predictions. The decoder already defaults them to nil.
             schemaVersion = 3
         }
+        if schemaVersion < 4 {
+            // Version 3 had a "cardBill" kind. `Spend`'s decoder turns those entries into spends in the
+            // built-in "Credit Card Bill" category, which is added below.
+            schemaVersion = 4
+        }
+        // Always, so a built-in category can never go missing.
+        addBuiltInCategories()
     }
 
     /// Adds an entry. Returns false if it is a duplicate SMS:
@@ -136,7 +167,7 @@ public struct Ledger: Codable, Equatable, Sendable {
         let old = transactions[index]
         var entry = transaction
         if old.kind != entry.kind { entry.sources.kind = .user }
-        // Changing the type can reset the account (a card bill is always "bank"). That is not a user decision.
+        // Changing the type can reset the account (other credit is always "bank"). That is not a user decision.
         if old.account != entry.account, old.kind == entry.kind { entry.sources.account = .user }
         if old.excluded != entry.excluded { entry.sources.excluded = .user }
         if old.merchant != entry.merchant { entry.sources.merchant = .user }
@@ -165,6 +196,7 @@ public struct Ledger: Codable, Equatable, Sendable {
         let claimed = Set(transactions.compactMap { $0.id == reversal.id ? nil : $0.reverses })
         let candidates = transactions.filter {
             ($0.kind == .spend || $0.kind == .savings)
+                && !$0.isCardBill
                 && !claimed.contains($0.id)
                 && $0.date <= reversal.date
                 && reversal.date.timeIntervalSince($0.date) <= Self.reversalWindow
@@ -188,6 +220,12 @@ public struct Ledger: Codable, Equatable, Sendable {
     private mutating func mergeDuplicate(_ duplicate: Spend, into index: Int) {
         var kept = transactions[index]
         if kept.ref == nil { kept.ref = duplicate.ref }
+        // The other SMS saw a card bill (for example the bank's "towards credit card" text).
+        if duplicate.isCardBill, !kept.isCardBill, kept.sources.category != .user, kept.kind == .spend {
+            kept.categoryID = SpendCategory.creditCardBillID
+            kept.sources.category = .rule
+            kept.account = .bank
+        }
         if kept.card == nil { kept.card = duplicate.card }
         if kept.account == .bank, duplicate.account == .creditCard, kept.sources.account != .user {
             kept.account = .creditCard

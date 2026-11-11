@@ -237,7 +237,10 @@ struct ManageCategoriesView: View {
                 }
                 .tint(.primary)
                 .swipeActions {
-                    Button("Delete", role: .destructive) { deleting = category }
+                    // Built-in categories decide how entries count (a card bill), so they stay.
+                    if !category.isBuiltIn {
+                        Button("Delete", role: .destructive) { deleting = category }
+                    }
                 }
             }
         }

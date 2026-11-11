@@ -25,7 +25,7 @@ final class SMSParserTests: XCTestCase {
 
     /// Checks kind, account and card of a debit or credit.
     private func assertKind(_ text: String, _ kind: EntryKind, account: PaymentAccount = .bank, card: String? = nil,
-                            amount: String? = nil, parser: SMSParser = SMSParser(),
+                            amount: String? = nil, cardBill: Bool = false, parser: SMSParser = SMSParser(),
                             file: StaticString = #filePath, line: UInt = #line) {
         let result = parser.parse(text)
         guard let parsed = result.parsed else {
@@ -39,6 +39,7 @@ final class SMSParserTests: XCTestCase {
         XCTAssertEqual(parsed.kind, kind, file: file, line: line)
         XCTAssertEqual(parsed.account, account, file: file, line: line)
         XCTAssertEqual(parsed.card, card, file: file, line: line)
+        XCTAssertEqual(parsed.isCardBill, cardBill, "card bill", file: file, line: line)
         if let amount {
             XCTAssertEqual(parsed.amount, Decimal(string: amount), file: file, line: line)
         }
@@ -178,29 +179,44 @@ final class SMSParserTests: XCTestCase {
 
     func testCardBillFromBankAccount() {
         assertKind("Rs 15,000.00 debited from A/c XX1234 towards your Bank Credit Card XX5678 on 02-11-26. Ref 998877",
-                   .cardBill, card: "5678", amount: "15000.00")
+                   .spend, card: "5678", amount: "15000.00", cardBill: true)
     }
 
     func testCardBillPaymentWording() {
         assertKind("Your A/c XX1234 is debited for Rs 8,200 on 02-11 for Credit Card bill payment. Ref 112233",
-                   .cardBill, amount: "8200")
+                   .spend, amount: "8200", cardBill: true)
     }
 
     func testCardBillViaCRED() {
-        assertKind("Rs.12,000 debited from A/c XX1234 to VPA cred.club@upi on 02-11-26. Ref 445566", .cardBill, amount: "12000")
+        assertKind("Rs.12,000 debited from A/c XX1234 to VPA cred.club@upi on 02-11-26. Ref 445566", .spend, amount: "12000",
+                   cardBill: true)
     }
 
     func testRegisteredCardBillWithoutCreditCardWords() {
-        assertKind("Rs 6,000 debited from A/c XX1234 towards Card XX5678 on 02-11-26", .cardBill, card: "5678",
-                   parser: SMSParser(creditCards: ["5678"]))
+        assertKind("Rs 6,000 debited from A/c XX1234 towards Card XX5678 on 02-11-26", .spend, card: "5678",
+                   cardBill: true, parser: SMSParser(creditCards: ["5678"]))
     }
 
     func testBillMerchantFallback() {
         guard case .debit(let parsed) = parser.parse("Rs 900 paid towards your Credit Card XX5678") else {
             return XCTFail("Expected debit")
         }
-        XCTAssertEqual(parsed.kind, .cardBill)
+        XCTAssertEqual(parsed.kind, .spend)
+        XCTAssertTrue(parsed.isCardBill)
         XCTAssertEqual(parsed.merchant, "Credit card bill")
+    }
+
+    func testCardBillEntryGetsTheBuiltInCategoryFromARule() throws {
+        let text = "Rs 15,000.00 debited from A/c XX1234 towards your Bank Credit Card XX5678 on 02-11-26. Ref 998877"
+        let entry = try XCTUnwrap(parser.parse(text).parsed).makeEntry(date: Date(), rawText: text)
+        XCTAssertTrue(entry.isCardBill)
+        XCTAssertEqual(entry.categoryID, SpendCategory.creditCardBillID)
+        XCTAssertEqual(entry.sources.category, .rule)
+        XCTAssertEqual(entry.card, "5678")
+        XCTAssertEqual(entry.account, .bank)
+
+        let spend = try XCTUnwrap(parser.parse("Rs 250 debited from A/c XX1234 to VPA shop@upi on 02-11-26").parsed)
+        XCTAssertNil(spend.makeEntry(date: Date(), rawText: nil).categoryID)
     }
 
     func testIssuerPaymentReceivedIgnored() {
@@ -232,7 +248,7 @@ final class SMSParserTests: XCTestCase {
 
     func testCardBillWinsOverSavingsWords() {
         // "SIP" never names a card bill, but a card bill must not become savings because of other words.
-        assertKind("Rs 4,000 debited from A/c XX1234 for Credit Card bill payment via BSE gateway", .cardBill)
+        assertKind("Rs 4,000 debited from A/c XX1234 for Credit Card bill payment via BSE gateway", .spend, cardBill: true)
     }
 
     // MARK: Amount helper

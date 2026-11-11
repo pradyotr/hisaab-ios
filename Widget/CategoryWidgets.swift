@@ -132,16 +132,28 @@ struct HisaabCategoryChartWidget: Widget {
 
 // MARK: - Categorize
 
-/// Spends skipped on the widget. Only a view preference, so it is not part of the ledger.
+/// Entries skipped on the widget. Only a view preference, so it is not part of the ledger.
+/// A small file next to the ledger, because that container is known to work after AltStore re-signs the app.
 enum WidgetSkips {
-    private static let key = "widgetSkippedSpends"
-    private static var defaults: UserDefaults? { UserDefaults(suiteName: AppGroup.id) }
+    private static var url: URL {
+        AppGroup.ledgerURL.deletingLastPathComponent().appendingPathComponent("widget-skips.json")
+    }
 
-    static var ids: Set<String> { Set(defaults?.stringArray(forKey: key) ?? []) }
-    static func save(_ ids: Set<String>) { defaults?.set(Array(ids), forKey: key) }
+    static var ids: Set<String> {
+        guard let data = try? Data(contentsOf: url), let list = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return Set(list)
+    }
+
+    static func save(_ ids: Set<String>) {
+        guard let data = try? JSONEncoder().encode(Array(ids).sorted()) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
 }
 
-/// Runs in the widget process when a category button is tapped.
+/// Runs in the widget process when a category button is tapped. Tapping the category that was assigned
+/// automatically confirms it: it becomes the user's choice and trains predictions.
 struct CategorizeSpendIntent: AppIntent {
     static let title: LocalizedStringResource = "Categorize Spend"
     static let isDiscoverable = false
@@ -162,6 +174,7 @@ struct CategorizeSpendIntent: AppIntent {
         if let spend = UUID(uuidString: spendID), let category = UUID(uuidString: categoryID) {
             try AppGroup.store.update { $0.setCategory(category, for: [spend]) }
         }
+        // The category can change how an entry counts (a card bill), so every widget reloads.
         WidgetCenter.shared.reloadAllTimelines()
         return .result()
     }
@@ -181,12 +194,25 @@ struct SkipSpendIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        var skipped = WidgetSkips.ids
+        // Only ids still waiting for review, so the list doesn't grow forever.
+        let queue = Set(AppGroup.store.load().reviewQueue.map(\.id.uuidString))
+        var skipped = WidgetSkips.ids.intersection(queue)
         skipped.insert(spendID)
-        // Once everything has been skipped, start again from the latest.
-        let needing = AppGroup.store.load().entriesNeedingCategory.map(\.id.uuidString)
-        let allSkipped = needing.allSatisfy { skipped.contains($0) }
-        WidgetSkips.save(allSkipped ? Set<String>() : skipped)
+        WidgetSkips.save(skipped)
+        WidgetCenter.shared.reloadTimelines(ofKind: "HisaabCategorizeWidget")
+        return .result()
+    }
+}
+
+/// Shows the skipped entries again.
+struct ResetSkipsIntent: AppIntent {
+    static let title: LocalizedStringResource = "Show Skipped Spends"
+    static let isDiscoverable = false
+
+    init() {}
+
+    func perform() async throws -> some IntentResult {
+        WidgetSkips.save([])
         WidgetCenter.shared.reloadTimelines(ofKind: "HisaabCategorizeWidget")
         return .result()
     }
@@ -195,8 +221,12 @@ struct SkipSpendIntent: AppIntent {
 struct CategorizeEntry: TimelineEntry {
     let date: Date
     let spend: Spend?
+    /// The category assigned automatically (learned or by a rule), shown highlighted. Nil = uncategorized.
+    let assignedID: UUID?
+    /// Entries in the review queue that are not skipped, including this one.
     let remaining: Int
-    /// Suggestions first, then the most used.
+    let skipped: Int
+    /// The assigned category first, then suggestions, then the most used.
     let options: [SpendCategory]
     let currencyCode: String
     let hideValues: Bool
@@ -212,32 +242,36 @@ struct CategorizeProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<CategorizeEntry>) -> Void) {
-        // Reloaded whenever a spend is logged or categorized.
+        // Reloaded whenever a spend is logged, categorized or skipped.
         completion(Timeline(entries: [entry()], policy: .never))
     }
 
     private func entry() -> CategorizeEntry {
         let ledger = AppGroup.store.load()
-        // Entries are stored newest first.
-        let needing = ledger.entriesNeedingCategory
-        let skipped = WidgetSkips.ids
-        let spend = needing.first { !skipped.contains($0.id.uuidString) } ?? needing.first
+        let queue = ledger.reviewQueue
+        let skippedIDs = WidgetSkips.ids
+        let waiting = queue.filter { !skippedIDs.contains($0.id.uuidString) }
+        let spend = waiting.first
+        let assignedID = spend?.categoryID
+
         let all = ledger.categoriesByUse
-        var options = all
+        var firstIDs: [UUID] = assignedID.map { [$0] } ?? []
         if let spend, let prediction = spend.prediction ?? ledger.categoryPrediction(for: spend) {
-            let suggestedIDs = prediction.candidates.map(\.categoryID)
-            let suggested = suggestedIDs.compactMap { id in all.first { $0.id == id } }
-            options = suggested + all.filter { !suggestedIDs.contains($0.id) }
+            let assigned = firstIDs
+            firstIDs.append(contentsOf: prediction.candidates.map(\.categoryID).filter { !assigned.contains($0) })
         }
-        return CategorizeEntry(date: Date(), spend: spend, remaining: needing.count,
-                               options: Array(options.prefix(Self.maxOptions)),
+        let first = firstIDs.compactMap { id in all.first { $0.id == id } }
+        let options = first + all.filter { !firstIDs.contains($0.id) }
+
+        return CategorizeEntry(date: Date(), spend: spend, assignedID: assignedID, remaining: waiting.count,
+                               skipped: queue.count - waiting.count, options: Array(options.prefix(Self.maxOptions)),
                                currencyCode: ledger.config?.currencyCode ?? "INR", hideValues: ledger.settings.hideValues)
     }
 
     private static var sample: CategorizeEntry {
-        CategorizeEntry(date: Date(), spend: Spend(amount: 350, merchant: "Merchant"), remaining: 3,
-                        options: ["Food", "Travel", "Bills", "Home"].map { SpendCategory(name: $0) },
-                        currencyCode: "INR", hideValues: false)
+        let options = ["Food", "Travel", "Bills", "Home"].map { SpendCategory(name: $0) }
+        return CategorizeEntry(date: Date(), spend: Spend(amount: 350, merchant: "Merchant"), assignedID: options[0].id,
+                               remaining: 3, skipped: 0, options: options, currencyCode: "INR", hideValues: false)
     }
 }
 
@@ -262,6 +296,15 @@ struct CategorizeWidgetView: View {
                 }
             } else if entry.spend != nil {
                 message("Create a category in Hisaab first", systemImage: "tag")
+            } else if entry.skipped > 0 {
+                VStack(spacing: 8) {
+                    message("\(entry.skipped) skipped", systemImage: "forward")
+                    Button(intent: ResetSkipsIntent()) {
+                        Text("Show again")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                }
             } else {
                 message("All caught up", systemImage: "checkmark.circle")
             }
@@ -282,9 +325,11 @@ struct CategorizeWidgetView: View {
 
     private func details(_ spend: Spend) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("\(entry.remaining) left")
+            Text(entry.assignedID == nil ? "\(entry.remaining) to review" : "\(entry.remaining) to review · tap to confirm")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             Spacer(minLength: 0)
             if !entry.hideValues {
                 Text(Format.money(spend.amount, entry.currencyCode))
@@ -303,11 +348,14 @@ struct CategorizeWidgetView: View {
                 .lineLimit(1)
             Spacer(minLength: 0)
             Button(intent: SkipSpendIntent(spendID: spend.id)) {
-                Text("Skip")
-                    .font(.caption2)
+                HStack(spacing: 4) {
+                    Image(systemName: "forward")
+                    Text("Skip")
+                }
+                .font(.caption)
+                .frame(minHeight: 28)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .buttonStyle(.bordered)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -315,14 +363,24 @@ struct CategorizeWidgetView: View {
     private func buttons(_ spend: Spend, limit: Int) -> some View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
             ForEach(Array(entry.options.prefix(limit))) { category in
-                Button(intent: CategorizeSpendIntent(spendID: spend.id, categoryID: category.id)) {
-                    Text(category.name)
-                        .font(.caption)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .frame(maxWidth: .infinity, minHeight: 36)
+                let isAssigned = category.id == entry.assignedID
+                let button = Button(intent: CategorizeSpendIntent(spendID: spend.id, categoryID: category.id)) {
+                    HStack(spacing: 3) {
+                        if isAssigned {
+                            Image(systemName: "checkmark")
+                        }
+                        Text(category.name)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, minHeight: 36)
                 }
-                .buttonStyle(.bordered)
+                if isAssigned {
+                    button.buttonStyle(.borderedProminent)
+                } else {
+                    button.buttonStyle(.bordered)
+                }
             }
         }
         .frame(maxWidth: .infinity)
@@ -335,7 +393,7 @@ struct HisaabCategorizeWidget: Widget {
             CategorizeWidgetView(entry: entry)
         }
         .configurationDisplayName("Hisaab (Categorize)")
-        .description("Categorize your latest spends with one tap.")
+        .description("Categorize your latest spends with one tap, and confirm or fix the ones Hisaab assigned.")
         .supportedFamilies([.systemMedium, .systemLarge])
     }
 }

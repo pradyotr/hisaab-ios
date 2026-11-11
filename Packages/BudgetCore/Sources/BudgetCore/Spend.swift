@@ -8,10 +8,9 @@ public enum TransactionSource: String, Codable, Sendable {
 /// What a money movement is, and so how it counts towards the budget (see `Counting`).
 public enum EntryKind: String, Codable, CaseIterable, Sendable {
     // Money out
-    /// Counts in full.
+    /// Counts in full. A spend in the built-in "Credit Card Bill" category is a card bill payment instead:
+    /// it counts only the part not covered by tracked card spends (see `Spend.isCardBill`).
     case spend
-    /// Credit card bill paid from a bank account. Counts only the part not covered by tracked card spends.
-    case cardBill
     /// Investment (SIP, stocks, mutual funds, ...). Money out, but it is saved, not spent: counts 0.
     case savings
     // Money in
@@ -27,7 +26,7 @@ public enum EntryKind: String, Codable, CaseIterable, Sendable {
 
     public var isCredit: Bool {
         switch self {
-        case .spend, .cardBill, .savings: return false
+        case .spend, .savings: return false
         case .refund, .reversal, .cashback, .otherCredit: return true
         }
     }
@@ -54,7 +53,7 @@ public struct Spend: Codable, Equatable, Identifiable, Sendable {
     public var rawText: String?
     public var kind: EntryKind
     public var account: PaymentAccount
-    /// Last 4 digits of the credit card: the card used, or for `.cardBill` the card being paid. Nil = unknown.
+    /// Last 4 digits of the credit card: the card used, or for a card bill the card being paid. Nil = unknown.
     public var card: String?
     /// Bank / UPI reference number (RRN, UTR, Ref no). Used to skip duplicate SMS and to link reversals.
     public var ref: String?
@@ -125,7 +124,8 @@ public struct Spend: Codable, Equatable, Identifiable, Sendable {
         source = try c.decodeIfPresent(TransactionSource.self, forKey: .source) ?? .manual
         rawText = try c.decodeIfPresent(String.self, forKey: .rawText)
         // Unknown values (from a newer build) fall back to safe defaults instead of failing the whole file.
-        kind = (try? c.decodeIfPresent(EntryKind.self, forKey: .kind)) ?? .spend
+        let rawKind = try? c.decodeIfPresent(String.self, forKey: .kind)
+        kind = rawKind.flatMap(EntryKind.init(rawValue:)) ?? .spend
         account = (try? c.decodeIfPresent(PaymentAccount.self, forKey: .account)) ?? .bank
         card = try c.decodeIfPresent(String.self, forKey: .card)
         ref = try c.decodeIfPresent(String.self, forKey: .ref)
@@ -134,6 +134,19 @@ public struct Spend: Codable, Equatable, Identifiable, Sendable {
         categoryID = try? c.decodeIfPresent(UUID.self, forKey: .categoryID)
         sources = (try? c.decodeIfPresent(FieldSources.self, forKey: .sources)) ?? FieldSources()
         prediction = try? c.decodeIfPresent(CategoryPrediction.self, forKey: .prediction)
+        // Schema 3 and older had a "cardBill" kind. It is now the built-in category (see `Ledger.migrate`).
+        if rawKind == "cardBill" {
+            categoryID = SpendCategory.creditCardBillID
+            // Whoever chose the old type chose the category. Nil (the parser's rule) is recorded as a rule.
+            sources.category = sources.kind == .user ? .user : .rule
+            account = .bank
+        }
+    }
+
+    /// A credit card bill payment: a debit in the built-in "Credit Card Bill" category.
+    /// It counts only the part not covered by open card charges (see `Counting`).
+    public var isCardBill: Bool {
+        kind == .spend && categoryID == SpendCategory.creditCardBillID
     }
 
     public func encode(to encoder: Encoder) throws {

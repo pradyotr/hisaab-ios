@@ -294,15 +294,24 @@ extension Ledger {
         return assigned
     }
 
-    /// Predicts one entry, if its category is not the user's and the entry counts towards spending.
+    /// Predicts one entry, if its category is not the user's or a rule's, and the entry counts towards spending.
     mutating func predictCategory(at index: Int, calendar: Calendar) {
-        guard !categories.isEmpty, transactions[index].sources.category != .user else { return }
+        let source = transactions[index].sources.category
+        guard !categories.isEmpty, source != .user, source != .rule else { return }
         let entry = transactions[index]
         guard (Counting.countedAmounts(transactions)[entry.id] ?? 0) != 0 else { return }
         applyPrediction(CategoryPredictor(ledger: self, calendar: calendar).predict(entry), at: index)
     }
 
     private mutating func applyPrediction(_ prediction: CategoryPrediction?, at index: Int) {
+        var prediction = prediction
+        // Only a bank debit can be a bill payment. Assigning the bill category to anything else would
+        // change how it counts, so that is only offered, never assigned.
+        let entry = transactions[index]
+        if prediction?.candidates.first?.categoryID == SpendCategory.creditCardBillID,
+           entry.kind != .spend || entry.account == .creditCard {
+            prediction?.autoAssign = false
+        }
         transactions[index].prediction = prediction
         if let prediction, prediction.autoAssign, let top = prediction.candidates.first {
             transactions[index].categoryID = top.categoryID

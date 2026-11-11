@@ -91,7 +91,22 @@ struct TransactionsView: View {
                 .disabled(spend.kind == kind)
             }
         }
-        if spend.kind.usesAccount {
+        if spend.kind == .spend {
+            Button {
+                var changed = spend
+                if spend.isCardBill {
+                    changed.categoryID = nil
+                } else {
+                    changed.categoryID = SpendCategory.creditCardBillID
+                    changed.account = .bank
+                }
+                model.update(changed)
+            } label: {
+                SwiftUI.Label(spend.isCardBill ? "Not a credit card bill" : "Credit card bill payment",
+                              systemImage: "creditcard.and.123")
+            }
+        }
+        if spend.kind.usesAccount && !spend.isCardBill {
             Button {
                 var changed = spend
                 changed.account = spend.account == .creditCard ? .bank : .creditCard
@@ -116,7 +131,6 @@ extension EntryKind {
     var title: String {
         switch self {
         case .spend: return "Spend"
-        case .cardBill: return "Credit card bill payment"
         case .savings: return "Savings / investment"
         case .refund: return "Refund"
         case .reversal: return "Reversal"
@@ -128,7 +142,6 @@ extension EntryKind {
     var symbol: String {
         switch self {
         case .spend: return "indianrupeesign.circle"
-        case .cardBill: return "creditcard.and.123"
         case .savings: return "chart.line.uptrend.xyaxis"
         case .refund: return "arrow.uturn.backward.circle"
         case .reversal: return "arrow.counterclockwise.circle"
@@ -141,8 +154,6 @@ extension EntryKind {
         switch self {
         case .spend:
             return "Counts in full. On a credit card, the card bill will not count it again."
-        case .cardBill:
-            return "Only the part not already covered by tracked card spends counts (for example interest, fees or purchases without an SMS)."
         case .savings:
             return "Money moved to an investment (SIP, stocks, mutual funds). It is saved, not spent, so it does not count. It shows as Invested."
         case .refund:
@@ -156,8 +167,11 @@ extension EntryKind {
         }
     }
 
-    /// Bank vs credit card matters for these (card bill matching). A card bill is always paid from a bank account.
-    var usesAccount: Bool { self != .cardBill && self != .otherCredit }
+    /// Bank vs credit card matters for these (card bill matching).
+    var usesAccount: Bool { self != .otherCredit }
+
+    /// For a spend in the "Credit Card Bill" category.
+    static let cardBillExplanation = "A credit card bill payment (its category). Only the part not already covered by tracked card spends counts (for example interest, fees or purchases without an SMS)."
 }
 
 struct TransactionRow: View {
@@ -188,7 +202,8 @@ struct TransactionRow: View {
                         .foregroundStyle(.secondary)
                 }
                 if let onTapCategory {
-                    CategoryChip(name: categoryName, isAuto: spend.sources.category == .learned,
+                    CategoryChip(name: categoryName,
+                                 isAuto: spend.sources.category == .learned || spend.sources.category == .rule,
                                  suggestion: suggestionName, action: onTapCategory)
                         .padding(.top, 2)
                 }
@@ -206,6 +221,7 @@ struct TransactionRow: View {
 
     private var icon: String {
         switch spend.kind {
+        case .spend where spend.isCardBill: return "creditcard.and.123"
         case .spend where spend.account == .creditCard: return "creditcard"
         case .spend: return spend.source == .sms ? "message" : "hand.tap"
         default: return spend.kind.symbol
@@ -226,11 +242,11 @@ struct TransactionRow: View {
         let card = spend.card.map { " XX\($0)" } ?? ""
         let onCard = spend.account == .creditCard ? " · credit card\(card)" : ""
         switch spend.kind {
-        case .spend:
-            return spend.account == .creditCard ? "Credit card\(card)" : nil
-        case .cardBill:
+        case .spend where spend.isCardBill:
             let counts = counted ?? spend.amount
             return "Card bill\(card) · \(Format.money(counts, currencyCode)) counted, \(Format.money(spend.amount - counts, currencyCode)) already tracked"
+        case .spend:
+            return spend.account == .creditCard ? "Credit card\(card)" : nil
         case .savings:
             return "Savings · not a spend\(onCard)"
         case .refund, .cashback:
@@ -268,6 +284,9 @@ struct TransactionEditor: View {
         model.ledger.categories.first { $0.id == categoryID }?.name ?? "None"
     }
 
+    /// A card bill is a spend in the built-in category, paid from a bank account.
+    private var isCardBill: Bool { kind == .spend && categoryID == SpendCategory.creditCardBillID }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -285,11 +304,11 @@ struct TransactionEditor: View {
                     Picker("Type", selection: $kind) {
                         ForEach(EntryKind.allCases, id: \.self) { Text($0.title).tag($0) }
                     }
-                    if kind.usesAccount {
+                    if kind.usesAccount && !isCardBill {
                         Toggle("On a credit card", isOn: $onCreditCard)
                     }
-                    if kind == .cardBill || (kind.usesAccount && onCreditCard) {
-                        TextField(kind == .cardBill ? "Card being paid, last 4 digits (optional)" : "Card last 4 digits (optional)",
+                    if isCardBill || (kind.usesAccount && onCreditCard) {
+                        TextField(isCardBill ? "Card being paid, last 4 digits (optional)" : "Card last 4 digits (optional)",
                                   text: $cardText)
                             .keyboardType(.numberPad)
                     }
@@ -303,7 +322,7 @@ struct TransactionEditor: View {
                     }
                     Toggle("Don't count", isOn: $excluded)
                 } footer: {
-                    Text(excluded ? "Kept in the list, but counts 0." : kind.explanation)
+                    Text(excluded ? "Kept in the list, but counts 0." : isCardBill ? EntryKind.cardBillExplanation : kind.explanation)
                 }
 
                 if spend?.ref != nil || spend?.rawText != nil {
@@ -381,8 +400,8 @@ struct TransactionEditor: View {
     private func draft() -> Spend {
         let cleanMerchant = merchant.trimmingCharacters(in: .whitespaces)
         let cleanNote = note.trimmingCharacters(in: .whitespaces)
-        let account: PaymentAccount = kind.usesAccount && onCreditCard ? .creditCard : .bank
-        let showsCard = kind == .cardBill || account == .creditCard
+        let account: PaymentAccount = kind.usesAccount && onCreditCard && !isCardBill ? .creditCard : .bank
+        let showsCard = isCardBill || account == .creditCard
         var entry = spend ?? Spend(amount: amount ?? 0, source: .manual)
         entry.amount = amount ?? entry.amount
         entry.merchant = cleanMerchant.isEmpty ? nil : cleanMerchant

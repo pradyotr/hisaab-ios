@@ -6,7 +6,8 @@ import Foundation
 /// |-----------------|------------------------------------------------------|
 /// | spend           | + amount                                             |
 /// | savings         | 0 (it is saved, not spent; reported as `invested`)   |
-/// | cardBill        | + the part not covered by open card charges          |
+/// | card bill       | + the part not covered by open card charges          |
+/// |   (a spend in the "Credit Card Bill" category, see `Spend.isCardBill`)  |
 /// | refund/cashback | − amount, on its own date                            |
 /// | reversal        | linked: cancels the original (both count 0); not linked: − amount |
 /// | otherCredit     | 0                                                    |
@@ -54,14 +55,14 @@ public enum Counting {
             var invested: Decimal = 0
 
             switch entry.kind {
+            case .spend where entry.isCardBill:
+                counted = consume(amount, card: card, from: &charges)
             case .spend, .savings:
                 if onCard {
                     let left = consume(amount, card: card, from: &credits)
                     if left > 0 { charges.append(Open(card: card, remaining: left)) }
                 }
                 if entry.kind == .spend { counted = amount } else { invested = amount }
-            case .cardBill:
-                counted = consume(amount, card: card, from: &charges)
             case .refund, .cashback, .reversal:
                 if onCard {
                     let left = consume(amount, card: card, from: &charges)
@@ -133,16 +134,16 @@ public enum Counting {
 
     /// Oldest first. At the same time: debits, then credits, then bills, so a bill can cover both.
     private static func ordered(_ entries: [Spend]) -> [Spend] {
-        func rank(_ kind: EntryKind) -> Int {
-            switch kind {
+        func rank(_ entry: Spend) -> Int {
+            if entry.isCardBill { return 2 }
+            switch entry.kind {
             case .spend, .savings: return 0
             case .refund, .reversal, .cashback, .otherCredit: return 1
-            case .cardBill: return 2
             }
         }
         return entries.sorted {
             if $0.date != $1.date { return $0.date < $1.date }
-            if rank($0.kind) != rank($1.kind) { return rank($0.kind) < rank($1.kind) }
+            if rank($0) != rank($1) { return rank($0) < rank($1) }
             return $0.id.uuidString < $1.id.uuidString
         }
     }

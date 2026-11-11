@@ -37,11 +37,9 @@ struct LogBankSMSIntent: AppIntent {
             let result = SMSParser(settings: ledger.settings).parse(message)
             switch result {
             case .debit(let parsed), .credit(let parsed):
-                let entry = Spend(amount: parsed.amount, date: date, merchant: parsed.merchant,
-                                  source: .sms, rawText: message, kind: parsed.kind, account: parsed.account,
-                                  card: parsed.card, ref: parsed.ref)
+                let entry = parsed.makeEntry(date: date, rawText: message)
                 if ledger.add(entry) {
-                    var details = [parsed.ruleID, parsed.kind.rawValue]
+                    var details = [parsed.ruleID, parsed.isCardBill ? "card bill" : parsed.kind.rawValue]
                     if parsed.account == .creditCard { details.append("credit card") }
                     if let card = parsed.card { details.append("card \(card)") }
                     if let ref = parsed.ref { details.append("ref \(ref)") }

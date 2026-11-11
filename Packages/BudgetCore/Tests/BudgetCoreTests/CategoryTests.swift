@@ -24,7 +24,7 @@ final class CategoryTests: XCTestCase {
         XCTAssertEqual(food.name, "Food")
         XCTAssertEqual(ledger.addCategory(named: "FOOD")?.id, food.id)
         XCTAssertNil(ledger.addCategory(named: "   "))
-        XCTAssertEqual(ledger.categories.count, 1)
+        XCTAssertEqual(ledger.categories.count, 1 + SpendCategory.builtIn.count)
     }
 
     func testRenameRefusesANameAlreadyInUse() throws {
@@ -33,7 +33,7 @@ final class CategoryTests: XCTestCase {
         ledger.addCategory(named: "Rent")
         XCTAssertFalse(ledger.renameCategory(food.id, to: "rent"))
         XCTAssertTrue(ledger.renameCategory(food.id, to: "FOOD"))
-        XCTAssertEqual(ledger.categories.first?.name, "FOOD")
+        XCTAssertEqual(ledger.categories.first { $0.id == food.id }?.name, "FOOD")
     }
 
     func testDeleteCategoryClearsItsEntries() throws {
@@ -75,7 +75,7 @@ final class CategoryTests: XCTestCase {
         let entry = Spend(amount: 10)
         ledger.add(entry)
         ledger.setCategory(rent.id, for: [entry.id])
-        XCTAssertEqual(ledger.categoriesByUse.map(\.id), [rent.id, bills.id, food.id])
+        XCTAssertEqual(ledger.categoriesByUse.map(\.id), [rent.id, bills.id, SpendCategory.creditCardBillID, food.id])
     }
 
     // MARK: Which entries need a category
@@ -134,7 +134,7 @@ final class CategoryTests: XCTestCase {
         let entry = Spend(amount: 10, account: .creditCard)
         ledger.add(entry)
         var edited = entry
-        edited.kind = .cardBill
+        edited.kind = .otherCredit
         edited.account = .bank
         ledger.update(edited)
         XCTAssertEqual(ledger.transactions[0].sources.kind, .user)
@@ -147,7 +147,7 @@ final class CategoryTests: XCTestCase {
         let json = #"{"schemaVersion":1,"transactions":[{"id":"7C9E6679-7425-40DE-944B-E07FC1F90AE7","amount":"10","date":0}]}"#
         let ledger = try JSONDecoder().decode(Ledger.self, from: Data(json.utf8))
         XCTAssertEqual(ledger.schemaVersion, Ledger.currentSchemaVersion)
-        XCTAssertEqual(ledger.categories, [])
+        XCTAssertEqual(ledger.categories, SpendCategory.builtIn)
         XCTAssertNil(ledger.transactions[0].categoryID)
         XCTAssertEqual(ledger.transactions[0].sources, FieldSources())
     }
@@ -237,7 +237,8 @@ final class CategoryTests: XCTestCase {
         let meal = Spend(amount: 500, date: date(2026, 11, 3), kind: .spend, categoryID: food.id)
         let refund = Spend(amount: 100, date: date(2026, 11, 4), kind: .refund, categoryID: food.id)
         let cardSpend = Spend(amount: 800, date: date(2026, 11, 5), account: .creditCard, categoryID: bills.id)
-        let cardBill = Spend(amount: 800, date: date(2026, 11, 6), kind: .cardBill, categoryID: bills.id)
+        // 1,000 paid: 800 was tracked, 200 (fees, untracked spends) counts under the bill category.
+        let cardBill = Spend(amount: 1_000, date: date(2026, 11, 6), categoryID: SpendCategory.creditCardBillID)
         let loose = Spend(amount: 50, date: date(2026, 11, 7))
         let savings = Spend(amount: 900, date: date(2026, 11, 8), kind: .savings, categoryID: food.id)
         let lastCycle = Spend(amount: 999, date: date(2026, 10, 8), categoryID: food.id)
@@ -245,9 +246,9 @@ final class CategoryTests: XCTestCase {
         let cycle = engine.cycle(containing: date(2026, 11, 15))
 
         let totals = engine.categoryTotals(for: cycle, transactions: entries)
-        XCTAssertEqual(totals.map(\.categoryID), [bills.id, food.id, nil])
-        XCTAssertEqual(totals.map(\.amount), [800, 400, 50])
-        XCTAssertEqual(totals.map(\.count), [1, 2, 1])
+        XCTAssertEqual(totals.map(\.categoryID), [bills.id, food.id, SpendCategory.creditCardBillID, nil])
+        XCTAssertEqual(totals.map(\.amount), [800, 400, 200, 50])
+        XCTAssertEqual(totals.map(\.count), [1, 2, 1, 1])
         XCTAssertEqual(totals.reduce(Decimal(0)) { $0 + $1.amount }, engine.summary(for: cycle, transactions: entries).spent)
     }
 

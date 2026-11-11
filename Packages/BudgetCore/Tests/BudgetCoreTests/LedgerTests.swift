@@ -67,8 +67,7 @@ final class LedgerTests: XCTestCase {
 
     private func smsEntry(_ text: String, at date: Date) throws -> Spend {
         let parsed = try XCTUnwrap(SMSParser().parse(text).parsed, "Not parsed: \(text)")
-        return Spend(amount: parsed.amount, date: date, merchant: parsed.merchant, source: .sms, rawText: text,
-                     kind: parsed.kind, account: parsed.account, card: parsed.card, ref: parsed.ref)
+        return parsed.makeEntry(date: date, rawText: text)
     }
 
     func testCardIssuerAndNPCISMSForOnePaymentAreOneEntry() throws {

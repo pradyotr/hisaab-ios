@@ -8,10 +8,23 @@ public struct ParsedSMS: Equatable, Sendable {
     public let kind: EntryKind
     /// Credit card or bank account.
     public let account: PaymentAccount
-    /// Last 4 digits of the credit card (the card used, or for `.cardBill` the card being paid), if named.
+    /// Last 4 digits of the credit card (the card used, or for a card bill the card being paid), if named.
     public let card: String?
     /// Bank / UPI reference number (6+ digits), if the SMS has one.
     public let ref: String?
+    /// The rules saw a credit card bill payment. The entry gets the built-in "Credit Card Bill" category.
+    public var isCardBill: Bool = false
+
+    /// The entry to log for this SMS. A card bill gets the built-in category, recorded as decided by a rule.
+    public func makeEntry(date: Date, rawText: String?) -> Spend {
+        var entry = Spend(amount: amount, date: date, merchant: merchant, source: .sms, rawText: rawText,
+                          kind: kind, account: account, card: card, ref: ref)
+        if isCardBill {
+            entry.categoryID = SpendCategory.creditCardBillID
+            entry.sources.category = .rule
+        }
+        return entry
+    }
 }
 
 public enum ParseResult: Equatable, Sendable {
@@ -182,10 +195,11 @@ public struct SMSParser: Sendable {
         for rule in rules where RX.matches(rule.mustMatch, text) {
             guard let amount = Self.firstAmount(pattern: rule.amount, in: text), amount > 0 else { continue }
             var merchant = rule.merchant.flatMap { RX.firstCapture($0, in: text) }.flatMap(Self.cleanMerchant)
-            let (kind, account, card) = classifyDebit(text)
-            if kind == .cardBill, merchant == nil { merchant = "Credit card bill" }
-            return .debit(ParsedSMS(amount: amount, merchant: merchant, ruleID: rule.id, kind: kind,
-                                    account: account, card: card, ref: Self.reference(in: text)))
+            let debit = classifyDebit(text)
+            if debit.isCardBill, merchant == nil { merchant = "Credit card bill" }
+            return .debit(ParsedSMS(amount: amount, merchant: merchant, ruleID: rule.id, kind: debit.kind,
+                                    account: debit.account, card: debit.card, ref: Self.reference(in: text),
+                                    isCardBill: debit.isCardBill))
         }
         return .ignored(reason: "no rule matched")
     }
@@ -223,19 +237,27 @@ public struct SMSParser: Sendable {
 
     // MARK: Debits
 
+    struct Debit {
+        let kind: EntryKind
+        let account: PaymentAccount
+        let card: String?
+        var isCardBill = false
+    }
+
     /// Card bill, savings, or spend (+ which account, + card digits).
-    func classifyDebit(_ text: String) -> (EntryKind, PaymentAccount, String?) {
+    func classifyDebit(_ text: String) -> Debit {
         let (onCard, card) = creditCardMention(text)
         let isKnownCard = card.map { creditCards.contains($0) } ?? false
         if Self.cardBillPatterns.contains(where: { RX.matches($0, text) })
             || (isKnownCard && RX.matches(Self.knownCardBillWordsPattern, text)) {
-            return (.cardBill, .bank, card)
+            // A bill is paid from a bank account. The card digits name the card being paid.
+            return Debit(kind: .spend, account: .bank, card: card, isCardBill: true)
         }
         let account: PaymentAccount = onCard ? .creditCard : .bank
         if isSavings(text) {
-            return (.savings, account, onCard ? card : nil)
+            return Debit(kind: .savings, account: account, card: onCard ? card : nil)
         }
-        return (.spend, account, onCard ? card : nil)
+        return Debit(kind: .spend, account: account, card: onCard ? card : nil)
     }
 
     func isSavings(_ text: String) -> Bool {

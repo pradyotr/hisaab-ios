@@ -61,7 +61,7 @@ struct ParserPlaygroundView: View {
                     if let parsed = result.parsed {
                         LabeledContent("Amount", value: "\(parsed.amount)")
                         LabeledContent("Merchant", value: parsed.merchant ?? "—")
-                        LabeledContent("Type", value: parsed.kind.title)
+                        LabeledContent("Type", value: parsed.isCardBill ? "Credit card bill payment" : parsed.kind.title)
                         LabeledContent("Account", value: parsed.account == .creditCard ? "Credit card" : "Bank")
                         LabeledContent("Card", value: parsed.card ?? "—")
                         LabeledContent("Reference", value: parsed.ref ?? "—")
