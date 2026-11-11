@@ -92,7 +92,7 @@ struct ChartsView: View {
             .pickerStyle(.segmented)
 
             BudgetChartLegend()
-            Text("Tap the chart to see a day's numbers. The dashed line is each day's budget, the solid line what you spent that day. Every day's budget is recalculated from what is left of its cycle's spend cap.")
+            Text("Tap the chart to see a day's numbers. The dashed blue line is each day's budget. The solid line is what you spent that day: red above the budget, green below. Every day's budget is recalculated from what is left of its cycle's spend cap.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -127,7 +127,7 @@ struct BudgetPoint: Identifiable {
     var id: Date { date }
 }
 
-/// Budget as a dashed baseline, spent as a solid line, the gap filled red (over) or green (under).
+/// Budget as a dashed blue baseline. Spent as a solid line, red where it is above the budget, green below.
 private struct BudgetLineChart<Tooltip: View>: View {
     let points: [BudgetPoint]
     let selected: Date?
@@ -135,67 +135,80 @@ private struct BudgetLineChart<Tooltip: View>: View {
     let onSelect: (Date?) -> Void
     @ViewBuilder let tooltip: (Date) -> Tooltip
 
-    private struct BandPoint: Identifiable {
+    /// One point of the spent line. Each run of over (or under) points is its own series, so it gets one colour.
+    private struct SpentPoint: Identifiable {
         let id: Int
+        let segment: Int
         let date: Date
-        let budget: Double
         let spent: Double
+        let isOver: Bool
     }
 
-    /// The points plus every place the lines cross, so each colour stops exactly at the crossing.
-    private var band: [BandPoint] {
-        var result: [(Date, Double, Double)] = []
-        for (index, point) in points.enumerated() {
+    /// The spent line cut into runs of one colour. A run ends where the lines cross; the crossing point is
+    /// added to both runs, so the colour changes exactly there and the line has no gap.
+    private var spentLine: [SpentPoint] {
+        var points: [(date: Date, budget: Double, spent: Double)] = []
+        for (index, point) in self.points.enumerated() {
             if index > 0 {
-                let previous = points[index - 1]
+                let previous = self.points[index - 1]
                 let before = previous.spent - previous.budget
                 let after = point.spent - point.budget
                 if (before > 0 && after < 0) || (before < 0 && after > 0) {
                     let t = before / (before - after)
                     let date = previous.date.addingTimeInterval(point.date.timeIntervalSince(previous.date) * t)
                     let value = previous.budget + (point.budget - previous.budget) * t
-                    result.append((date, value, value))
+                    points.append((date, value, value))
                 }
             }
-            result.append((point.date, point.budget, point.spent))
+            points.append((point.date, point.budget, point.spent))
         }
-        return result.enumerated().map { BandPoint(id: $0.offset, date: $0.element.0, budget: $0.element.1, spent: $0.element.2) }
+
+        var result: [SpentPoint] = []
+        var segment = 0
+        var segmentIsOver: Bool?
+        for index in points.indices {
+            let point = points[index]
+            // The colour of the stretch from this point to the next (both sides are on the same side of the budget).
+            let next = index + 1 < points.count ? points[index + 1] : point
+            let isOver = (point.spent - point.budget) + (next.spent - next.budget) > 0
+            if let current = segmentIsOver, current != isOver {
+                // Close the run at this point and start the next run from the same point.
+                result.append(SpentPoint(id: result.count, segment: segment, date: point.date, spent: point.spent, isOver: current))
+                segment += 1
+            }
+            segmentIsOver = isOver
+            result.append(SpentPoint(id: result.count, segment: segment, date: point.date, spent: point.spent, isOver: isOver))
+        }
+        return result
     }
 
     private var selectedPoint: BudgetPoint? { points.first { $0.date == selected } }
 
     var body: some View {
         Chart {
-            ForEach(band) { point in
-                AreaMark(x: .value("Date", point.date),
-                         yStart: .value("Amount", point.budget),
-                         yEnd: .value("Amount", max(point.spent, point.budget)))
-                    .foregroundStyle(by: .value("Series", "Over"))
-                AreaMark(x: .value("Date", point.date),
-                         yStart: .value("Amount", min(point.spent, point.budget)),
-                         yEnd: .value("Amount", point.budget))
-                    .foregroundStyle(by: .value("Series", "Under"))
-            }
-            ForEach(points) { point in
-                LineMark(x: .value("Date", point.date), y: .value("Amount", point.spent))
-                    .foregroundStyle(by: .value("Series", "Spent"))
-                    .lineStyle(StrokeStyle(lineWidth: 1.5))
+            ForEach(spentLine) { point in
+                LineMark(x: .value("Date", point.date), y: .value("Amount", point.spent),
+                         series: .value("Series", "Spent \(point.segment)"))
+                    .foregroundStyle(point.isOver ? BudgetChartColors.over : BudgetChartColors.under)
+                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
             }
             // The budget line goes on top of a solid line in the background colour. The dash gaps then show
-            // the background instead of the fills, so the line stays readable over a year of busy data.
+            // the background instead of the spent line, so it stays readable over a year of busy data.
             ForEach(points) { point in
-                LineMark(x: .value("Date", point.date), y: .value("Amount", point.budget))
-                    .foregroundStyle(by: .value("Series", "Budget backing"))
+                LineMark(x: .value("Date", point.date), y: .value("Amount", point.budget),
+                         series: .value("Series", "Budget backing"))
+                    .foregroundStyle(BudgetChartColors.background)
                     .lineStyle(StrokeStyle(lineWidth: 2))
             }
             ForEach(points) { point in
-                LineMark(x: .value("Date", point.date), y: .value("Amount", point.budget))
-                    .foregroundStyle(by: .value("Series", "Budget"))
+                LineMark(x: .value("Date", point.date), y: .value("Amount", point.budget),
+                         series: .value("Series", "Budget"))
+                    .foregroundStyle(BudgetChartColors.budget)
                     .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 3]))
             }
             if points.count == 1, let point = points.first {
                 PointMark(x: .value("Date", point.date), y: .value("Amount", point.spent))
-                    .foregroundStyle(Color.primary)
+                    .foregroundStyle(point.spent > point.budget ? BudgetChartColors.over : BudgetChartColors.under)
             }
             if let point = selectedPoint {
                 RuleMark(x: .value("Date", point.date))
@@ -208,18 +221,10 @@ private struct BudgetLineChart<Tooltip: View>: View {
                     .foregroundStyle(BudgetChartColors.budget)
                     .symbolSize(50)
                 PointMark(x: .value("Date", point.date), y: .value("Amount", point.spent))
-                    .foregroundStyle(point.spent > point.budget ? Color.red : Color.green)
+                    .foregroundStyle(point.spent > point.budget ? BudgetChartColors.over : BudgetChartColors.under)
                     .symbolSize(70)
             }
         }
-        .chartForegroundStyleScale([
-            "Over": Color.red.opacity(0.25),
-            "Under": Color.green.opacity(0.25),
-            "Spent": Color.primary.opacity(0.8),
-            "Budget backing": BudgetChartColors.background,
-            "Budget": BudgetChartColors.budget,
-        ])
-        .chartLegend(.hidden)
         .chartXAxis {
             AxisMarks(values: axis.values) { _ in
                 AxisGridLine()
@@ -245,8 +250,10 @@ private struct BudgetLineChart<Tooltip: View>: View {
     }
 }
 
-/// Blue stands apart from the red and green fills and from the grey/black spent line, in light and dark mode.
+/// Brighter than the system red and green, so a thin line still stands out. Blue stays apart from both.
 private enum BudgetChartColors {
+    static let over = Color(red: 1.0, green: 0.27, blue: 0.27)
+    static let under = Color(red: 0.13, green: 0.86, blue: 0.40)
     static let budget = Color.blue
     static let background = Color(uiColor: .systemBackground)
 }
@@ -256,9 +263,8 @@ private struct BudgetChartLegend: View {
         HStack(spacing: 14) {
             item(DashedLine().stroke(style: StrokeStyle(lineWidth: 2, dash: [4, 2])).frame(width: 16, height: 2),
                  "Budget", BudgetChartColors.budget)
-            item(Rectangle().frame(width: 16, height: 1.5), "Spent", Color.primary.opacity(0.8))
-            item(RoundedRectangle(cornerRadius: 2).frame(width: 10, height: 10), "Over", Color.red.opacity(0.5))
-            item(RoundedRectangle(cornerRadius: 2).frame(width: 10, height: 10), "Under", Color.green.opacity(0.5))
+            item(DashedLine().stroke(lineWidth: 2).frame(width: 16, height: 2), "Spent over", BudgetChartColors.over)
+            item(DashedLine().stroke(lineWidth: 2).frame(width: 16, height: 2), "Spent under", BudgetChartColors.under)
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
@@ -282,7 +288,8 @@ private struct DashedLine: Shape {
     }
 }
 
-/// Small card shown above the tapped point: the result, then budget and spent.
+/// Card shown above the tapped point: the result, then budget and spent.
+/// A solid card (not a material), so it looks the same whatever part of the chart is behind it.
 private struct ChartTooltip: View {
     let title: String
     let budget: Decimal
@@ -292,21 +299,41 @@ private struct ChartTooltip: View {
     private var difference: Decimal { budget - spent }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.caption.bold())
-            Text("\(difference >= 0 ? "Saved" : "Exceeded") \(Format.money(abs(difference), currencyCode))")
                 .font(.caption)
-                .foregroundStyle(Format.color(forDifference: difference))
-            Text("Budget \(Format.money(budget, currencyCode))")
-                .font(.caption2)
                 .foregroundStyle(.secondary)
-            Text("Spent \(Format.money(spent, currencyCode))")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            Text("\(difference >= 0 ? "Saved" : "Exceeded") \(Format.money(abs(difference), currencyCode))")
+                .font(.subheadline.bold())
+                .foregroundStyle(difference >= 0 ? BudgetChartColors.under : BudgetChartColors.over)
+            Divider()
+            row("Budget", budget)
+            row("Spent", spent)
         }
-        .padding(8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(uiColor: .separator), lineWidth: 0.5)
+        )
+        .environment(\.colorScheme, .light)
         .fixedSize()
+    }
+
+    private func row(_ name: String, _ value: Decimal) -> some View {
+        HStack(spacing: 12) {
+            Text(name)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Text(Format.money(value, currencyCode))
+                .monospacedDigit()
+                .foregroundStyle(.primary)
+        }
+        .font(.caption)
     }
 }
