@@ -59,7 +59,7 @@ public struct TodaySnapshot: Equatable, Sendable {
 /// For day d (0-based) of a cycle with N days and spend cap S:
 ///   B_d = max(S - spentBefore(d), 0) / (N - d)
 /// Underspending raises later daily budgets, overspending lowers them.
-/// Note: the sum of daily differences is NOT the cycle difference; the monthly chart uses S - totalSpent.
+/// Note: the sum of daily differences is NOT the cycle difference (S - totalSpent).
 public struct BudgetEngine: Sendable {
     public let config: BudgetConfig
     public let calendar: Calendar
@@ -93,6 +93,32 @@ public struct BudgetEngine: Sendable {
     /// Pass ALL entries: they are counted first (card bills, refunds, reversals, savings; see `Counting`).
     public func dayStatuses(for cycle: BudgetCycle, transactions: [Spend], through last: Date? = nil) -> [DayStatus] {
         dayStatuses(for: cycle, counted: Counting.countedEntries(transactions), through: last)
+    }
+
+    /// Status for every day from the day containing `start` through the day containing `last`, across cycles.
+    /// Each cycle's daily budgets are computed within that cycle, as `dayStatuses(for:)` does.
+    /// `start` nil = from the first day of the cycle of the earliest entry (all time).
+    /// Pass ALL entries: they are counted once, first (see `Counting`).
+    public func dayStatuses(transactions: [Spend], from start: Date?, through last: Date) -> [DayStatus] {
+        let counted = Counting.countedEntries(transactions)
+        let current = cycle(containing: last)
+        var c: BudgetCycle
+        if let start {
+            c = cycle(containing: min(start, last))
+        } else if let earliest = transactions.map(\.date).min(), earliest < current.start {
+            c = cycle(containing: earliest)
+        } else {
+            c = current
+        }
+        var result: [DayStatus] = []
+        while c.start <= current.start {
+            result += dayStatuses(for: c, counted: counted, through: last)
+            guard c.end > c.start else { break }
+            c = cycle(containing: c.end)
+        }
+        guard let start else { return result }
+        let firstDay = calendar.startOfDay(for: start)
+        return result.filter { $0.date >= firstDay }
     }
 
     /// Pass ALL entries: they are counted first (see `Counting`).

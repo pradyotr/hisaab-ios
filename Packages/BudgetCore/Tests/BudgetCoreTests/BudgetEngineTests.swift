@@ -136,4 +136,41 @@ final class BudgetEngineTests: XCTestCase {
     func testCycleSummariesWithNoTransactions() {
         XCTAssertEqual(engine().cycleSummaries(transactions: [], upTo: date(2026, 11, 3)).count, 1)
     }
+
+    // MARK: Days across cycles (Trends chart)
+
+    func testDayStatusesAcrossCyclesJoinTheCyclesInOrder() {
+        let e = engine()
+        let entries = [Spend(amount: 1_000, date: date(2026, 10, 10)), Spend(amount: 500, date: date(2026, 11, 3))]
+        let all = e.dayStatuses(transactions: entries, from: nil, through: date(2026, 11, 5))
+        let october = e.dayStatuses(for: e.cycle(containing: date(2026, 10, 15)), transactions: entries)
+        let november = e.dayStatuses(for: e.cycle(containing: date(2026, 11, 5)), transactions: entries, through: date(2026, 11, 5))
+        XCTAssertEqual(all, october + november)
+        XCTAssertEqual(all.count, 31 + 5)
+        XCTAssertEqual(all.first?.date, date(2026, 10, 1, 0))
+        // Each cycle starts over from the spend cap: 30,000 / 30 days.
+        XCTAssertEqual(all.first { $0.date == date(2026, 11, 1, 0) }?.budget, 1_000)
+    }
+
+    func testDayStatusesFromADateKeepTheirFullCycleBudgets() {
+        let e = engine()
+        let entries = [Spend(amount: 1_000, date: date(2026, 10, 10)), Spend(amount: 500, date: date(2026, 11, 3))]
+        let all = e.dayStatuses(transactions: entries, from: nil, through: date(2026, 11, 5))
+        let recent = e.dayStatuses(transactions: entries, from: date(2026, 10, 20, 15), through: date(2026, 11, 5))
+        XCTAssertEqual(recent.first?.date, date(2026, 10, 20, 0))
+        XCTAssertEqual(recent, Array(all.suffix(recent.count)))
+        XCTAssertEqual(recent.count, 12 + 5)
+    }
+
+    func testDayStatusesWithNoEntriesShowTheCurrentCycleOnly() {
+        let days = engine().dayStatuses(transactions: [], from: nil, through: date(2026, 11, 5))
+        XCTAssertEqual(days.map(\.date), (1...5).map { date(2026, 11, $0, 0) })
+    }
+
+    func testDayStatusesFromADateStillCountCardBillsAgainstEarlierCharges() {
+        let charge = Spend(amount: 700, date: date(2026, 10, 28), account: .creditCard)
+        let bill = Spend(amount: 1_000, date: date(2026, 11, 2), categoryID: SpendCategory.creditCardBillID)
+        let days = engine().dayStatuses(transactions: [charge, bill], from: date(2026, 11, 1), through: date(2026, 11, 3))
+        XCTAssertEqual(days.map(\.spent), [0, 300, 0])
+    }
 }
