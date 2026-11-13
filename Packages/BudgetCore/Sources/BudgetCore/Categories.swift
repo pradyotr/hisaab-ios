@@ -62,7 +62,7 @@ extension Spend {
         guard let text = rawText else { return .unknown }
         if RX.matches(#"\batm\b|\bwithdrawn\b"#, text) { return .atm }
         if RX.matches(#"\bdebit\s*card\b"#, text) { return .debitCard }
-        if RX.matches(#"\bupi\b|\bbhim\b|\bvpa\b|[a-z0-9._-]+@[a-z]+"#, text) { return .upi }
+        if RX.matches(#"\bupi\b|\bbhim\b|\bvpa\b|[a-z0-9*._-]+@[a-z]+"#, text) { return .upi }
         if RX.matches(#"\b(neft|imps|rtgs|net\s*banking)\b"#, text) { return .bankTransfer }
         if RX.matches(#"\bcard\b"#, text) { return .debitCard }
         return .unknown

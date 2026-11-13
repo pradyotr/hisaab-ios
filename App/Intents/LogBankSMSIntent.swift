@@ -30,37 +30,24 @@ struct LogBankSMSIntent: AppIntent {
     }
 
     /// Shared with the in-app parser playground so both paths behave the same.
+    /// While the iPhone is locked the ledger can't be read: the SMS waits in the inbox, and the widgets get an
+    /// estimate until the next unlocked write takes it in (see `LedgerStore`).
     @discardableResult
     static func process(message: String, at date: Date) throws -> String {
+        let store = AppGroup.store
         var outcome = ""
-        try AppGroup.store.update { ledger in
-            let result = SMSParser(settings: ledger.settings).parse(message)
-            switch result {
-            case .debit(let parsed), .credit(let parsed):
-                let entry = parsed.makeEntry(date: date, rawText: message)
-                if ledger.add(entry) {
-                    var details = [parsed.ruleID, parsed.isCardBill ? "card bill" : parsed.kind.rawValue]
-                    if parsed.account == .creditCard { details.append("credit card") }
-                    if let card = parsed.card { details.append("card \(card)") }
-                    if let ref = parsed.ref { details.append("ref \(ref)") }
-                    if let saved = ledger.transactions.first(where: { $0.id == entry.id }), let guess = saved.prediction {
-                        let top = guess.candidates.first.flatMap { candidate in
-                            ledger.categories.first { $0.id == candidate.categoryID }?.name
-                        } ?? "?"
-                        details.append("\(guess.autoAssign ? "auto" : "suggested"): \(top)")
-                    }
-                    if parsed.kind == .reversal {
-                        let linked = ledger.transactions.first { $0.id == entry.id }?.reverses != nil
-                        details.append(linked ? "linked to original" : "no original found")
-                    }
-                    outcome = "Logged \(parsed.amount) \(parsed.merchant ?? "") [\(details.joined(separator: ", "))]"
-                } else {
-                    outcome = "Duplicate SMS, skipped"
-                }
-            case .ignored(let reason):
-                outcome = "Ignored: \(reason)"
+        do {
+            try store.update(now: date) { outcome = $0.logSMS(message, at: date) }
+        } catch is LedgerStore.Unavailable {
+            var ignored = false
+            outcome = "Saved until unlock"
+            try? store.updateDigest { digest in
+                let result = digest.addPending(message, at: date)
+                outcome = result.outcome
+                ignored = result.ignored
             }
-            ledger.appendLog(outcome, rawText: message, at: date)
+            // An SMS the parser ignores (OTPs, personal messages) is not kept.
+            if !ignored { try store.enqueue(message, at: date) }
         }
         WidgetCenter.shared.reloadAllTimelines()
         return outcome

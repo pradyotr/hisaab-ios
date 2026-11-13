@@ -8,6 +8,10 @@ struct SettingsView: View {
     @State private var newSavingsWord = ""
     @State private var export: ExportFile?
     @State private var exportError: String?
+    @AppStorage(AppLock.storageKey) private var appLockEnabled = false
+    @State private var appLockError: String?
+    @State private var confirmDelete = false
+    @State private var deleteError: String?
 
     var body: some View {
         NavigationStack {
@@ -32,12 +36,34 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle("Lock with \(AppLock.methodName)", isOn: Binding(
+                        get: { appLockEnabled },
+                        set: { setAppLock($0) }
+                    ))
+                    if let appLockError {
+                        Text(appLockError)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                } header: {
+                    Text("Privacy")
+                } footer: {
+                    Text("Asks for \(AppLock.methodName) (or your passcode) when you open Hisaab. The app is always hidden in the app switcher. SMS logging and widgets keep working while the app is locked.")
+                }
+
+                Section {
                     Toggle("Hide amounts in widgets", isOn: Binding(
                         get: { model.ledger.settings.hideValues },
                         set: { model.setHideValues($0) }
                     ))
+                    Toggle("Hide amounts while iPhone is locked", isOn: Binding(
+                        get: { model.ledger.settings.hideWidgetsWhenLocked },
+                        set: { model.setHideWidgetsWhenLocked($0) }
+                    ))
+                } header: {
+                    Text("Widgets")
                 } footer: {
-                    Text("The \"Hisaab\" and \"Hisaab (Cycle)\" widgets then show percentages only, on the lock screen and the home screen. The \"Hisaab (Private)\" widget always hides amounts.")
+                    Text("Hide amounts: the \"Hisaab\" and \"Hisaab (Cycle)\" widgets show percentages only, on the lock screen and the home screen. The \"Hisaab (Private)\" widget always hides amounts. While locked: widgets that show amounts are blurred until you unlock your iPhone. Widgets that only show percentages stay visible.")
                 }
 
                 Section {
@@ -113,10 +139,10 @@ struct SettingsView: View {
                 } header: {
                     Text("Backup")
                 } footer: {
-                    Text("Saves everything as one JSON file. It includes your spends and the original bank SMS, so keep it private.")
+                    Text("Saves everything as one JSON file that is not encrypted, so keep it somewhere private. Hisaab deletes its own copy when the share sheet closes.")
                 }
 
-                Section("Diagnostics") {
+                Section {
                     LabeledContent("Shared storage") {
                         Text(AppGroup.isShared ? "OK" : "NOT SHARED")
                             .foregroundStyle(AppGroup.isShared ? .green : .red)
@@ -125,10 +151,58 @@ struct SettingsView: View {
                         .font(.footnote)
                     NavigationLink("Test SMS parser") { ParserPlaygroundView() }
                     NavigationLink("Debug log (\(model.ledger.log.count))") { DebugLogView() }
+                    Toggle("Keep full SMS text", isOn: Binding(
+                        get: { model.ledger.settings.keepFullSMSText },
+                        set: { model.setKeepFullSMSText($0) }
+                    ))
+                } header: {
+                    Text("Diagnostics")
+                } footer: {
+                    Text("Off: Hisaab keeps the full bank SMS for 7 days, then removes its numbers (balances, account and reference numbers). SMS that are not spends are not stored, and the debug log is cleared after 30 days. Turn on only to report a parsing problem.")
+                }
+
+                Section {
+                    Button("Delete all data", role: .destructive) { confirmDelete = true }
+                    if let deleteError {
+                        Text(deleteError)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                } footer: {
+                    Text("Erases your budget, spends, categories, settings and the debug log from this iPhone. This can't be undone. Export first if you want a copy.")
                 }
             }
             .navigationTitle("Settings")
-            .sheet(item: $export) { ShareSheet(url: $0.url) }
+            .sheet(item: $export, onDismiss: { ExportFiles.removeAll() }) { ShareSheet(url: $0.url) }
+            .confirmationDialog("Delete all Hisaab data?", isPresented: $confirmDelete, titleVisibility: .visible) {
+                Button("Delete all data", role: .destructive) {
+                    do {
+                        try model.deleteAllData()
+                    } catch {
+                        deleteError = error.localizedDescription
+                    }
+                }
+            } message: {
+                Text("Everything is erased from this iPhone. This can't be undone.")
+            }
+        }
+    }
+}
+
+extension SettingsView {
+    /// Turning the lock on asks first, so it can't be turned on without a working Face ID or passcode.
+    private func setAppLock(_ enabled: Bool) {
+        appLockError = nil
+        guard enabled else {
+            appLockEnabled = false
+            return
+        }
+        Task { @MainActor in
+            if let failure = await AppLock.authenticate(reason: "Turn on the app lock for Hisaab.") {
+                appLockError = failure
+            } else {
+                appLockEnabled = true
+            }
         }
     }
 }

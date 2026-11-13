@@ -30,4 +30,19 @@ enum AppGroup {
     }
 
     static var store: LedgerStore { LedgerStore(url: ledgerURL) }
+
+    /// What the budget widgets show. Readable while the iPhone is locked (see `LedgerStore`).
+    /// Built from the ledger when there is no digest yet (the first run after updating the app).
+    static func widgetDigest(now: Date = Date()) -> WidgetDigest? {
+        if let digest = store.loadDigest() { return digest }
+        return (try? store.loadAvailable()).map { WidgetDigest(ledger: $0, now: now) }
+    }
+
+    /// Moves SMS that arrived while the iPhone was locked into the ledger, if it can be read now.
+    /// Returns true if it did, so the caller can reload the widgets.
+    @discardableResult
+    static func takeInPendingSMS() -> Bool {
+        guard store.hasPendingSMS else { return false }
+        return (try? store.update { _ in }) != nil
+    }
 }
