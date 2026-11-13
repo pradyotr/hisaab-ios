@@ -7,9 +7,11 @@ struct HisaabApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environment(model)
-                .preferredColorScheme(appearance.colorScheme)
+            PrivacyGate {
+                ContentView()
+            }
+            .environment(model)
+            .preferredColorScheme(appearance.colorScheme)
         }
     }
 }

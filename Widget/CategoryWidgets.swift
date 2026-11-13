@@ -12,6 +12,8 @@ struct CategoryChartEntry: TimelineEntry {
     let currencyCode: String
     let hideValues: Bool
     let isSetUp: Bool
+    /// Settings > Widgets > Hide amounts while iPhone is locked.
+    var hideWhenLocked = false
 }
 
 struct CategoryChartProvider: TimelineProvider {
@@ -22,6 +24,7 @@ struct CategoryChartProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<CategoryChartEntry>) -> Void) {
+        if AppGroup.takeInPendingSMS() { WidgetCenter.shared.reloadAllTimelines() }
         let now = Date()
         let calendar = Calendar.current
         let tomorrow = calendar.date(byAdding: .day, value: 1, to: now) ?? now.addingTimeInterval(86_400)
@@ -29,16 +32,16 @@ struct CategoryChartProvider: TimelineProvider {
         completion(Timeline(entries: [entry(at: now), entry(at: midnight)], policy: .after(midnight)))
     }
 
+    /// From the widget digest (category totals only), so it also works while the iPhone is locked.
     private func entry(at date: Date) -> CategoryChartEntry {
-        let ledger = AppGroup.store.load()
-        guard let config = ledger.config else {
+        guard let digest = AppGroup.widgetDigest(now: date), let config = digest.config else {
             return CategoryChartEntry(date: date, slices: [], spent: 0, currencyCode: "INR", hideValues: true, isSetUp: false)
         }
-        let engine = BudgetEngine(config: config)
-        let totals = engine.categoryTotals(for: engine.cycle(containing: date), transactions: ledger.transactions)
-        return CategoryChartEntry(date: date, slices: CategoryPie.slices(totals: totals, categories: ledger.categories),
+        let totals = digest.categoryTotals(at: date)
+        return CategoryChartEntry(date: date, slices: CategoryPie.slices(totals: totals, categories: digest.categories),
                                   spent: totals.reduce(Decimal(0)) { $0 + $1.amount }, currencyCode: config.currencyCode,
-                                  hideValues: ledger.settings.hideValues, isSetUp: true)
+                                  hideValues: digest.settings.hideValues, isSetUp: true,
+                                  hideWhenLocked: digest.settings.hideWidgetsWhenLocked)
     }
 
     private static var sample: CategoryChartEntry {
@@ -83,6 +86,7 @@ struct CategoryChartWidgetView: View {
                 }
             }
         }
+        .privacySensitive(entry.hideWhenLocked && !entry.hideValues)
         .widgetBackground(family)
     }
 
@@ -195,8 +199,11 @@ struct SkipSpendIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         // Only ids still waiting for review, so the list doesn't grow forever.
-        let queue = Set(AppGroup.store.load().reviewQueue.map(\.id.uuidString))
-        var skipped = WidgetSkips.ids.intersection(queue)
+        // While the ledger can't be read (iPhone locked), nothing is dropped.
+        var skipped = WidgetSkips.ids
+        if let ledger = try? AppGroup.store.loadAvailable() {
+            skipped.formIntersection(ledger.reviewQueue.map(\.id.uuidString))
+        }
         skipped.insert(spendID)
         WidgetSkips.save(skipped)
         WidgetCenter.shared.reloadTimelines(ofKind: "HisaabCategorizeWidget")
@@ -230,6 +237,10 @@ struct CategorizeEntry: TimelineEntry {
     let options: [SpendCategory]
     let currencyCode: String
     let hideValues: Bool
+    /// Settings > Widgets > Hide amounts while iPhone is locked. Hides the spend's details, not the buttons.
+    var hideWhenLocked = false
+    /// The ledger can't be read (iPhone locked). The widget shows that and tries again later.
+    var isLocked = false
 }
 
 struct CategorizeProvider: TimelineProvider {
@@ -242,12 +253,20 @@ struct CategorizeProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<CategorizeEntry>) -> Void) {
-        // Reloaded whenever a spend is logged, categorized or skipped.
-        completion(Timeline(entries: [entry()], policy: .never))
+        if AppGroup.takeInPendingSMS() { WidgetCenter.shared.reloadAllTimelines() }
+        let entry = entry()
+        // Reloaded whenever a spend is logged, categorized or skipped. Nothing tells the widget when the iPhone
+        // is unlocked, so a locked entry asks again in 15 minutes.
+        let policy: TimelineReloadPolicy = entry.isLocked ? .after(Date().addingTimeInterval(15 * 60)) : .never
+        completion(Timeline(entries: [entry], policy: policy))
     }
 
+    /// Reads the full ledger: this widget shows a merchant and an amount, which the digest does not have.
     private func entry() -> CategorizeEntry {
-        let ledger = AppGroup.store.load()
+        guard let ledger = try? AppGroup.store.loadAvailable() else {
+            return CategorizeEntry(date: Date(), spend: nil, assignedID: nil, remaining: 0, skipped: 0, options: [],
+                                   currencyCode: "INR", hideValues: true, isLocked: true)
+        }
         let queue = ledger.reviewQueue
         let skippedIDs = WidgetSkips.ids
         let waiting = queue.filter { !skippedIDs.contains($0.id.uuidString) }
@@ -265,7 +284,8 @@ struct CategorizeProvider: TimelineProvider {
 
         return CategorizeEntry(date: Date(), spend: spend, assignedID: assignedID, remaining: waiting.count,
                                skipped: queue.count - waiting.count, options: Array(options.prefix(Self.maxOptions)),
-                               currencyCode: ledger.config?.currencyCode ?? "INR", hideValues: ledger.settings.hideValues)
+                               currencyCode: ledger.config?.currencyCode ?? "INR", hideValues: ledger.settings.hideValues,
+                               hideWhenLocked: ledger.settings.hideWidgetsWhenLocked)
     }
 
     private static var sample: CategorizeEntry {
@@ -285,15 +305,19 @@ struct CategorizeWidgetView: View {
                 if family == .systemLarge {
                     VStack(alignment: .leading, spacing: 12) {
                         details(spend)
+                            .privacySensitive(entry.hideWhenLocked)
                         buttons(spend, limit: 10)
                         Spacer(minLength: 0)
                     }
                 } else {
                     HStack(spacing: 12) {
                         details(spend)
+                            .privacySensitive(entry.hideWhenLocked)
                         buttons(spend, limit: 4)
                     }
                 }
+            } else if entry.isLocked {
+                message("Unlock iPhone to review spends", systemImage: "lock")
             } else if entry.spend != nil {
                 message("Create a category in Hisaab first", systemImage: "tag")
             } else if entry.skipped > 0 {

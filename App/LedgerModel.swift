@@ -14,13 +14,18 @@ final class LedgerModel {
 
     init() {
         reload()
+        ExportFiles.removeAll()
     }
 
     var config: BudgetConfig? { ledger.config }
     var engine: BudgetEngine? { ledger.config.map { BudgetEngine(config: $0) } }
 
+    /// Re-reads the file (the App Intent may have written), takes in SMS that arrived while the iPhone was locked
+    /// (any `update` does that) and applies the SMS text retention rules.
     func reload() {
         ledger = store.load()
+        var copy = ledger
+        if copy.applyRetention() || store.hasPendingSMS { mutate { _ = $0.applyRetention() } }
     }
 
     func saveConfig(_ config: BudgetConfig) { mutate { $0.config = config } }
@@ -32,6 +37,13 @@ final class LedgerModel {
     func setHideValues(_ hide: Bool) { mutate { $0.settings.hideValues = hide } }
     func setCreditCards(_ cards: [String]) { mutate { $0.settings.creditCards = cards } }
     func setSavingsKeywords(_ words: [String]) { mutate { $0.settings.savingsKeywords = words } }
+    func setHideWidgetsWhenLocked(_ hide: Bool) { mutate { $0.settings.hideWidgetsWhenLocked = hide } }
+    func setKeepFullSMSText(_ keep: Bool) {
+        mutate {
+            $0.settings.keepFullSMSText = keep
+            $0.applyRetention()
+        }
+    }
     func clearLog() { mutate { $0.log.removeAll() } }
 
     // MARK: Categories
@@ -68,19 +80,32 @@ final class LedgerModel {
         return assigned
     }
 
-    // MARK: Export
+    // MARK: Export and erasure
 
-    /// Writes all data to a temporary JSON file for the share sheet.
+    /// Writes all data to a temporary JSON file for the share sheet. The file is encrypted while the iPhone is
+    /// locked and is deleted when the share sheet closes (`ExportFiles.removeAll`).
     func exportFile() throws -> URL {
+        ExportFiles.removeAll()
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Hisaab-export-\(formatter.string(from: Date())).json")
-        try encoder.encode(store.load()).write(to: url, options: .atomic)
+            .appendingPathComponent("\(ExportFiles.prefix)\(formatter.string(from: Date())).json")
+        try encoder.encode(store.load()).write(to: url, options: [.atomic, .completeFileProtection])
         return url
+    }
+
+    /// Erases everything Hisaab stores: the ledger (spends, budget, categories, settings, log), unreadable copies,
+    /// the widget's skip list and export files. UI preferences (appearance, app lock) are kept.
+    func deleteAllData() throws {
+        try store.deleteAll()
+        let skips = AppGroup.ledgerURL.deletingLastPathComponent().appendingPathComponent("widget-skips.json")
+        try? FileManager.default.removeItem(at: skips)
+        ExportFiles.removeAll()
+        ledger = store.load()
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private func mutate(_ body: (inout Ledger) -> Void) {
@@ -93,5 +118,21 @@ final class LedgerModel {
             ledger = fallback
         }
         WidgetCenter.shared.reloadAllTimelines()
+    }
+}
+
+/// Export files in the temporary folder.
+enum ExportFiles {
+    static let prefix = "Hisaab-export-"
+
+    /// Deletes export files left in the temporary folder. Called when the share sheet closes and at launch,
+    /// in case the app was closed while sharing.
+    static func removeAll() {
+        let fileManager = FileManager.default
+        let files = (try? fileManager.contentsOfDirectory(at: fileManager.temporaryDirectory,
+                                                          includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.lastPathComponent.hasPrefix(prefix) {
+            try? fileManager.removeItem(at: file)
+        }
     }
 }

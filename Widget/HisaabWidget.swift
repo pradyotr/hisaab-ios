@@ -9,6 +9,8 @@ struct HisaabEntry: TimelineEntry {
     let snapshot: TodaySnapshot?
     let currencyCode: String
     let hideValues: Bool
+    /// Settings > Widgets > Hide amounts while iPhone is locked.
+    var hideWhenLocked = false
 }
 
 /// Reads the shared ledger. Produces one entry for now and one for the next midnight,
@@ -27,6 +29,7 @@ struct HisaabProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<HisaabEntry>) -> Void) {
+        if AppGroup.takeInPendingSMS() { WidgetCenter.shared.reloadAllTimelines() }
         let now = Date()
         let calendar = Calendar.current
         let tomorrow = calendar.date(byAdding: .day, value: 1, to: now) ?? now.addingTimeInterval(86_400)
@@ -34,14 +37,15 @@ struct HisaabProvider: TimelineProvider {
         completion(Timeline(entries: [entry(at: now), entry(at: midnight)], policy: .after(midnight)))
     }
 
+    /// From the widget digest, not the ledger: the ledger can't be read while the iPhone is locked.
     private func entry(at date: Date) -> HisaabEntry {
-        let ledger = AppGroup.store.load()
-        let hide = forceHide || ledger.settings.hideValues
-        guard let config = ledger.config else {
+        let digest = AppGroup.widgetDigest(now: date)
+        let hide = forceHide || (digest?.settings.hideValues ?? false)
+        guard let digest, let config = digest.config, let snapshot = digest.snapshot(at: date) else {
             return HisaabEntry(date: date, snapshot: nil, currencyCode: "INR", hideValues: hide)
         }
-        let snapshot = BudgetEngine(config: config).snapshot(at: date, transactions: ledger.transactions)
-        return HisaabEntry(date: date, snapshot: snapshot, currencyCode: config.currencyCode, hideValues: hide)
+        return HisaabEntry(date: date, snapshot: snapshot, currencyCode: config.currencyCode, hideValues: hide,
+                           hideWhenLocked: digest.settings.hideWidgetsWhenLocked)
     }
 
     static func sample(hide: Bool) -> HisaabEntry {
@@ -73,6 +77,8 @@ struct HisaabWidgetView: View {
                 Text("Set up Hisaab")
             }
         }
+        // The circular gauge shows only a percentage, so it stays visible.
+        .privacySensitive(entry.hideWhenLocked && !entry.hideValues && family != .accessoryCircular)
         .widgetBackground(family)
     }
 
@@ -139,6 +145,8 @@ struct HisaabCycleWidgetView: View {
                 Image(systemName: "indianrupeesign")
             }
         }
+        // Only the home screen version shows amounts.
+        .privacySensitive(entry.hideWhenLocked && !entry.hideValues && family == .systemSmall)
         .widgetBackground(family)
     }
 }

@@ -9,20 +9,32 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Extra words that mark a debit as savings (an investment), on top of the built-in list
     /// in `SMSParser.savingsPatterns`. Matched case-insensitively anywhere in the SMS, e.g. "mybroker".
     public var savingsKeywords: [String]
+    /// Debugging option: keep the full SMS text forever and keep ignored SMS in the debug log.
+    /// Off by default, so the stored text is minimised (see `Ledger.applyRetention`).
+    public var keepFullSMSText: Bool
+    /// Widgets that show amounts mark them as privacy-sensitive, so iOS hides them while the iPhone is locked.
+    public var hideWidgetsWhenLocked: Bool
 
-    public init(hideValues: Bool = false, creditCards: [String] = [], savingsKeywords: [String] = []) {
+    public init(hideValues: Bool = false, creditCards: [String] = [], savingsKeywords: [String] = [],
+                keepFullSMSText: Bool = false, hideWidgetsWhenLocked: Bool = false) {
         self.hideValues = hideValues
         self.creditCards = creditCards
         self.savingsKeywords = savingsKeywords
+        self.keepFullSMSText = keepFullSMSText
+        self.hideWidgetsWhenLocked = hideWidgetsWhenLocked
     }
 
-    private enum CodingKeys: String, CodingKey { case hideValues, creditCards, savingsKeywords }
+    private enum CodingKeys: String, CodingKey {
+        case hideValues, creditCards, savingsKeywords, keepFullSMSText, hideWidgetsWhenLocked
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         hideValues = try c.decodeIfPresent(Bool.self, forKey: .hideValues) ?? false
         creditCards = try c.decodeIfPresent([String].self, forKey: .creditCards) ?? []
         savingsKeywords = try c.decodeIfPresent([String].self, forKey: .savingsKeywords) ?? []
+        keepFullSMSText = try c.decodeIfPresent(Bool.self, forKey: .keepFullSMSText) ?? false
+        hideWidgetsWhenLocked = try c.decodeIfPresent(Bool.self, forKey: .hideWidgetsWhenLocked) ?? false
     }
 }
 
@@ -54,6 +66,8 @@ public struct Ledger: Codable, Equatable, Sendable {
     /// Two different SMS with the same amount and direction this close together are one payment,
     /// unless they name different reference numbers or cards.
     public static let duplicateSMSWindow: TimeInterval = 120
+    /// The same SMS text, or the same reference number, this close together is one payment (`add`'s default).
+    public static let duplicateWindow: TimeInterval = 600
 
     public var schemaVersion: Int
     public var config: BudgetConfig?
@@ -140,7 +154,7 @@ public struct Ledger: Codable, Equatable, Sendable {
     /// A duplicate still fills in details the kept entry is missing (see `mergeDuplicate`).
     /// A reversal with no link is linked to its matching debit, if one is found and `linkReversal` is true.
     @discardableResult
-    public mutating func add(_ transaction: Spend, dedupeWindow: TimeInterval = 600, linkReversal: Bool = true,
+    public mutating func add(_ transaction: Spend, dedupeWindow: TimeInterval = Ledger.duplicateWindow, linkReversal: Bool = true,
                              calendar: Calendar = .current) -> Bool {
         if transaction.source == .sms, let index = duplicateIndex(of: transaction, dedupeWindow: dedupeWindow) {
             let merchant = transactions[index].merchant
@@ -266,85 +280,5 @@ public struct Ledger: Codable, Equatable, Sendable {
     public mutating func appendLog(_ message: String, rawText: String? = nil, at date: Date = Date()) {
         log.insert(LogEntry(date: date, message: message, rawText: rawText), at: 0)
         if log.count > Self.maxLogEntries { log.removeLast(log.count - Self.maxLogEntries) }
-    }
-}
-
-/// Reads and writes the ledger JSON file. Writes are atomic.
-public struct LedgerStore: Sendable {
-    public let url: URL
-
-    public init(url: URL) {
-        self.url = url
-    }
-
-    /// Returns an empty ledger if the file does not exist.
-    /// If the file exists but cannot be decoded, it is moved aside (never silently overwritten).
-    public func load() -> Ledger {
-        (try? coordinated(writing: false) { rawLoad() }) ?? rawLoad()
-    }
-
-    public func save(_ ledger: Ledger) throws {
-        try coordinated(writing: true) { try rawSave(ledger) }
-    }
-
-    /// Load, change, save, as one coordinated write. Always re-reads first, because another process
-    /// (widget / App Intent) may have written. The file coordinator makes the other process wait.
-    @discardableResult
-    public func update(_ body: (inout Ledger) -> Void) throws -> Ledger {
-        try coordinated(writing: true) {
-            var ledger = rawLoad()
-            body(&ledger)
-            try rawSave(ledger)
-            return ledger
-        }
-    }
-
-    // MARK: Private. Never call `coordinated` from inside another `coordinated` block.
-
-    #if canImport(Darwin)
-    /// NSFileCoordinator serialises access across the app, the App Intent and the widget processes.
-    private func coordinated<T>(writing: Bool, _ body: () throws -> T) throws -> T {
-        let coordinator = NSFileCoordinator(filePresenter: nil)
-        var coordinationError: NSError?
-        var result: Result<T, Error>?
-        if writing {
-            coordinator.coordinate(writingItemAt: url, options: .forMerging, error: &coordinationError) { _ in
-                result = Result(catching: { try body() })
-            }
-        } else {
-            coordinator.coordinate(readingItemAt: url, options: [], error: &coordinationError) { _ in
-                result = Result(catching: { try body() })
-            }
-        }
-        if let coordinationError { throw coordinationError }
-        guard let result else { throw CocoaError(.fileReadUnknown) }
-        return try result.get()
-    }
-    #else
-    /// Linux / Windows (tests only): one process, nothing to coordinate.
-    private func coordinated<T>(writing: Bool, _ body: () throws -> T) throws -> T {
-        try body()
-    }
-    #endif
-
-    private func rawLoad() -> Ledger {
-        guard let data = try? Data(contentsOf: url) else { return Ledger() }
-        do {
-            return try JSONDecoder().decode(Ledger.self, from: data)
-        } catch {
-            let backup = url.deletingPathExtension()
-                .appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970)).json")
-            try? FileManager.default.moveItem(at: url, to: backup)
-            var ledger = Ledger()
-            ledger.appendLog("Ledger file unreadable, moved to \(backup.lastPathComponent): \(error)")
-            return ledger
-        }
-    }
-
-    private func rawSave(_ ledger: Ledger) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(ledger).write(to: url, options: .atomic)
     }
 }

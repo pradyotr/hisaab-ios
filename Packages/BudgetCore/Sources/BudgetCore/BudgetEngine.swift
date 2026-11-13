@@ -145,7 +145,11 @@ public struct BudgetEngine: Sendable {
     }
 
     public func snapshot(at date: Date, transactions: [Spend]) -> TodaySnapshot {
-        let counted = Counted(transactions)
+        snapshot(at: date, counted: Counted(transactions))
+    }
+
+    /// From entries that were already counted (`WidgetDigest`). Never pass raw entries here.
+    func snapshot(at date: Date, counted: Counted) -> TodaySnapshot {
         let c = cycle(containing: date)
         let statuses = dayStatuses(for: c, counted: counted.spent, through: date)
         let today = statuses.last
@@ -160,13 +164,19 @@ public struct BudgetEngine: Sendable {
     // MARK: On counted entries. Never count twice.
 
     /// Entries with amounts replaced by what they add to "spent" (signed) and to "invested".
-    private struct Counted {
+    struct Counted {
         let spent: [Spend]
         let invested: [Spend]
 
         init(_ entries: [Spend]) {
             spent = Counting.countedEntries(entries)
             invested = Counting.investedEntries(entries)
+        }
+
+        /// Already counted elsewhere.
+        init(spent: [Spend], invested: [Spend]) {
+            self.spent = spent
+            self.invested = invested
         }
     }
 

@@ -38,6 +38,10 @@ targets:
       properties:
         CFBundleDisplayName: Hisaab
         UILaunchScreen: {}
+        # Settings > Privacy > Lock with Face ID (App/AppLock.swift).
+        NSFaceIDUsageDescription: Hisaab uses Face ID to unlock the app when the app lock is on.
+        # Only Apple's built-in encryption (file protection) is used, so no export compliance documents.
+        ITSAppUsesNonExemptEncryption: false
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
     entitlements:
@@ -66,6 +70,7 @@ targets:
       path: Widget/Info.plist
       properties:
         CFBundleDisplayName: Hisaab Widget
+        ITSAppUsesNonExemptEncryption: false
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
