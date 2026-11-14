@@ -86,7 +86,7 @@ extension SMSRule {
         id: "generic",
         mustMatch: #"\b(debited|spent|paid|sent|withdrawn|purchased?)\b|\bdebit of\b|\btxn of\b"#,
         amount: SMSParser.currencyAmountPattern,
-        merchant: #"\b(?:at|to|towards|info:?)\s+([a-z0-9][a-z0-9 &._@*'\-/]{1,40}?)(?=\s+(?:on|via|ref|upi|avl|from|txn|dated|using)\b|[,;\n]|\.(?:\s|$)|$)"#
+        merchant: #"\b(?:at|to|towards|info:?)\s+([a-z0-9][a-z0-9 &._@*'\-/]{1,40}?)(?=\s+(?:on|via|ref|upi|avl|from|txn|dated|using)\b|\s*\(|[,;\n]|\.(?:\s|$)|$)"#
     )
 }
 
@@ -303,7 +303,13 @@ public struct SMSParser: Sendable {
         name = name.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let lower = name.lowercased()
         if name.count < 2 || name.allSatisfy({ $0.isNumber }) { return nil }
-        if lower.hasPrefix("your ") || lower.hasPrefix("a/c") || lower.hasPrefix("ac ") { return nil }
+        if lower.hasPrefix("your ") { return nil }
+        if lower.hasPrefix("a/c") || lower.hasPrefix("ac ") {
+            // A payee account ("to a/c **7273") is the only name the SMS gives: keep its masked number.
+            guard let number = name.split(separator: " ").dropFirst().first,
+                  number.contains(where: { $0.isNumber }) else { return nil }
+            return "A/c \(number)"
+        }
         return name
     }
 }
