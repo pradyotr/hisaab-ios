@@ -65,6 +65,15 @@ final class SMSParserTests: XCTestCase {
         assertDebit("Sent ₹1,20,000 from A/c XX1234 to John Doe on 03-11. Not you? Call 1800", "120000", merchant: "John Doe")
     }
 
+    func testHDFCUPIToAccountPayee() {
+        // The payee is a masked account followed by "(UPI Ref…)"; "to report" at the end is not the payee.
+        let sms = "HDFC Bank:Rs. 2001.00 debited from a/c *1234 on 14/11/26 to a/c **5678 (UPI Ref No. 123456789012). Not you? Call on 18001234567 to report"
+        assertDebit(sms, "2001.00", merchant: "A/c **5678")
+        XCTAssertEqual(parser.parse(sms).parsed?.ref, "123456789012")
+        assertDebit("Rs 300 debited from A/c XX1234 to VPA shop@upi (UPI Ref 1234). Not you? Call 1800 to report", "300",
+                    merchant: "shop@upi")
+    }
+
     func testDebitedAndCreditedToMerchant() {
         assertDebit("Rs 500 debited from A/c XX1234 and credited to zomato@upi", "500", merchant: "zomato@upi")
         assertKind("Rs 500 debited from A/c XX1234 and credited to zomato@upi for payment", .spend)
